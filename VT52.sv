@@ -16,6 +16,8 @@
 //
 //============================================================================
 
+`define BUILD_TERMINAL
+
 module emu
 (
 	//Master input clock
@@ -239,9 +241,12 @@ localparam CONF_STR = {
 wire forced_scandoubler;
 wire   [1:0] buttons;
 wire [127:0] status;
-wire  [10:0] ps2_key;
+wire ps2_clk,ps2_data;
+//wire  [10:0] ps2_key;
 
-hps_io #(.CONF_STR(CONF_STR)) hps_io
+// PS2DIV : the divider needs to be set so that clk_sys devided by 
+// this value (i.e. 1600) is between 10Khz and 16Kzh (in our case it is 12.5 kHz 20,000,000/1600)
+hps_io #(.CONF_STR(CONF_STR),.PS2DIV(1600)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
@@ -254,7 +259,9 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.status(status),
 	.status_menumask({status[5]}),
 	
-	.ps2_key(ps2_key)
+//	.ps2_key(ps2_key),
+	.ps2_kbd_clk_out(ps2_clk),
+	.ps2_kbd_data_out(ps2_data)
 );
 
 ///////////////////////   CLOCKS   ///////////////////////////////
@@ -264,10 +271,49 @@ pll pll
 (
 	.refclk(CLK_50M),
 	.rst(0),
-	.outclk_0(clk_sys)
+	.outclk_0(clk_sys) // 20 Mhz
 );
 
 wire reset = RESET | status[0] | buttons[1];
+
+
+`ifdef BUILD_TERMINAL
+
+wire HBlank;
+wire HSync;
+wire VBlank;
+wire VSync;
+wire ce_pix;
+wire video_out;
+
+VT52_terminal vt52_inst
+(
+  .clk(clk_sys),
+  .hsync(HSync),
+  .vsync(VSync),
+  .hblank(HBlank),
+  .vblank(VBlank),
+  .video(video_out),
+  .led(LED_USER),
+  .ps2_data(ps2_data),
+  .ps2_clk(ps2_clk),
+  .pin_usb_p(USB_P),
+  .pin_usb_n(USB_N),
+  .pin_pu(USB_PU)
+);
+
+assign CLK_VIDEO = clk_sys;
+assign CE_PIXEL = 1;
+assign VGA_DE = ~(HBlank | VBlank);
+assign VGA_HS = HSync;
+assign VGA_VS = VSync;
+
+// Convert single-bit video output to 8-bit RGB
+assign VGA_R = {8{video_out}};
+assign VGA_G = {8{video_out}};
+assign VGA_B = {8{video_out}};
+
+`else
 
 wire [1:0] col = status[4:3];
 
@@ -309,5 +355,9 @@ assign VGA_B  = (!col || col == 3) ? video : 8'd0;
 reg  [26:0] act_cnt;
 always @(posedge clk_sys) act_cnt <= act_cnt + 1'd1; 
 assign LED_USER    = act_cnt[26]  ? act_cnt[25:18]  > act_cnt[7:0]  : act_cnt[25:18]  <= act_cnt[7:0];
+
+`endif
+
+
 
 endmodule

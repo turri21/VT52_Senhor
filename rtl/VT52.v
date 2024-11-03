@@ -1,3 +1,64 @@
+/*
+
+# VT52 Module Analysis
+
+## Inputs and Outputs
+- Inputs: `clk`, `reset`, `pal`, `scandouble`
+- Outputs: `ce_pix`, `HBlank`, `HSync`, `VBlank`, `VSync`, `video`
+
+## Key Components
+
+1. **Counters**: 
+   - `hc`: Horizontal counter
+   - `vc`: Vertical counter
+   - `vvc`: Another vertical counter (possibly for effects)
+
+2. **Random Number Generator**:
+   - Uses an LFSR (Linear Feedback Shift Register) for randomness
+
+3. **Cosine Generator**:
+   - Generates cosine values based on vertical position
+
+4. **Timing Logic**:
+   - Generates horizontal and vertical sync and blank signals
+   - Supports both PAL and non-PAL (likely NTSC) modes
+   - Implements scan doubling option
+
+5. **Video Output**:
+   - Generates an 8-bit video output based on cosine and random values
+
+## Functionality
+
+1. **Clock and Reset**:
+   - The module is synchronized to the input clock
+   - Reset initializes counters
+
+2. **Pixel Clock**:
+   - `ce_pix` (clock enable for pixel) is generated based on `scandouble`
+
+3. **Counters**:
+   - Horizontal counter (`hc`) counts up to 637
+   - Vertical counter (`vc`) counts up to 623/311 (PAL) or 523/261 (non-PAL)
+   - `vvc` is incremented by 6 at the end of each frame
+
+4. **Sync and Blank Signals**:
+   - HBlank: Active from 529 to 0
+   - HSync: Active from 544 to 590
+   - VSync and VBlank: Timing depends on PAL/non-PAL and scandouble settings
+
+5. **Video Generation**:
+   - Uses cosine values and random numbers to create a pattern
+   - The final video output is an 8-bit value
+
+## Notable Features
+- Supports both PAL and non-PAL (likely NTSC) video standards
+- Implements scan doubling for higher refresh rates
+- Uses a combination of deterministic (cosine) and random elements for video generation
+
+This module appears to be designed for generating test patterns or special effects, possibly for a retro-style video system or display.
+
+*/
+
 
 module VT52
 (
@@ -78,10 +139,12 @@ always @(posedge clk) begin
 	if (hc == 590) HSync <= 0;
 end
 
-reg  [7:0] cos_out;
 wire [5:0] cos_g = cos_out[7:3]+6'd32;
-cos cos(vvc + {vc>>scandouble, 2'b00}, cos_out);
-
+wire [7:0] cos_out;
+cos cos(
+    .x(vvc + {vc>>scandouble, 2'b00}),
+    .y(cos_out)
+);
 assign video = (cos_g >= rnd_c) ? {cos_g - rnd_c, 2'b00} : 8'd0;
 
 endmodule

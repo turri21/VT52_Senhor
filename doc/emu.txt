@@ -1,0 +1,143 @@
+emu interface
+
+1. CLK_50M (input):
+   This is the master input clock, likely running at 50 MHz. It serves as the primary timing source for the entire module.
+
+2. RESET (input):
+   An asynchronous reset signal from the top-level module. It can be used as an initial reset for the system.
+
+3. HPS_BUS (inout [48:0]):
+   A 49-bit bidirectional bus that must be passed to an HPS (Hard Processor System) I/O module. It's likely used for communication with a processor system.
+
+4. CLK_VIDEO (output):
+   The base video clock output. It's typically equal to the system clock (CLK_SYS) and is used for video timing.
+
+5. CE_PIXEL (output):
+   Pixel clock enable signal. It's based on CLK_VIDEO and can be used to support multiple resolutions by varying its rate.
+
+6. VIDEO_ARX (output [12:0]):
+   13-bit output representing the video aspect ratio's X component for HDMI. If bit 12 is set, bits [11:0] contain a scaled size instead of the aspect ratio.
+
+7. VIDEO_ARY (output [12:0]):
+   Similar to VIDEO_ARX, but for the Y component of the aspect ratio.
+
+8. VGA_R, VGA_G, VGA_B (output [7:0] each):
+   8-bit color channels for VGA output (Red, Green, Blue).
+
+9. VGA_HS, VGA_VS (output):
+   Horizontal and Vertical Sync signals for VGA.
+
+10. VGA_DE (output):
+    Display Enable signal for VGA. It's active when not in vertical or horizontal blanking periods.
+
+11. VGA_F1 (output):
+    Likely a field indicator for interlaced video modes.
+
+12. VGA_SL (output [1:0]):
+    Scanline output, possibly used for scanline effects.
+
+13. VGA_SCALER (output):
+    A flag to force the use of the VGA scaler.
+
+14. VGA_DISABLE (output):
+    A signal to turn off the analog VGA output.
+
+15. HDMI_WIDTH, HDMI_HEIGHT (input [11:0] each):
+    12-bit inputs specifying the width and height of the HDMI output.
+
+16. HDMI_FREEZE (output):
+    A signal to freeze the HDMI output, likely holding the current frame.
+
+17. HDMI_BLACKOUT (output):
+    A signal to black out the HDMI output.
+
+18-24. Framebuffer-related signals (ifdef MISTER_FB):
+   - FB_EN (output): Enables the use of the framebuffer in DDRAM.
+   - FB_FORMAT (output [4:0]): Specifies the format of the framebuffer:
+     - Bits [2:0]: 011=8bpp(palette), 100=16bpp, 101=24bpp, 110=32bpp
+     - Bit [3]: 0=16bits 565, 1=16bits 1555
+     - Bit [4]: 0=RGB, 1=BGR (for 16/24/32 bit modes)
+   - FB_WIDTH, FB_HEIGHT (output [11:0] each): Specify the dimensions of the framebuffer.
+   - FB_BASE (output [31:0]): Base address of the framebuffer in memory.
+   - FB_STRIDE (output [13:0]): Stride of the framebuffer (0 or multiple of pixel size in bytes).
+   - FB_VBL, FB_LL (input): Vertical Blank and Load Line signals.
+   - FB_FORCE_BLANK (output): Forces the framebuffer output to be blank.
+
+25-29. Palette-related signals (ifdef MISTER_FB_PALETTE):
+   - FB_PAL_CLK (output): Clock for palette operations.
+   - FB_PAL_ADDR (output [7:0]): Address for palette entry.
+   - FB_PAL_DOUT (output [23:0]): Data output for palette.
+   - FB_PAL_DIN (input [23:0]): Data input for palette.
+   - FB_PAL_WR (output): Write enable for palette operations.
+
+30. LED_USER (output):
+    User LED control (1 - ON, 0 - OFF).
+
+31-32. LED_POWER, LED_DISK (output [1:0] each):
+    Control signals for power and disk activity LEDs.
+
+33. BUTTONS (output [1:0]):
+    Simulates I/O board button presses (active high).
+    - Bit [1]: User button
+    - Bit [0]: OSD button
+
+34-38. Audio-related signals:
+   - CLK_AUDIO (input): 24.576 MHz audio clock.
+   - AUDIO_L, AUDIO_R (output [15:0] each): Left and right audio channels.
+   - AUDIO_S (output): Indicates if audio samples are signed (1) or unsigned (0).
+   - AUDIO_MIX (output [1:0]): Audio mixing level (0 - no mix, 1 - 25%, 2 - 50%, 3 - 100% mono).
+
+39. ADC_BUS (inout [3:0]):
+    4-bit bidirectional Analog-to-Digital Converter bus.
+
+40-44. SD card interface (SPI):
+   - SD_SCK, SD_MOSI, SD_CS (output): Clock, data out, and chip select for SD card.
+   - SD_MISO (input): Data in from SD card.
+   - SD_CD (input): Card Detect signal.
+
+45-55. DDR3 RAM interface:
+   - DDRAM_CLK (output): Clock for DDR3 RAM.
+   - DDRAM_BUSY (input): Indicates when DDR3 is busy.
+   - DDRAM_BURSTCNT (output [7:0]): Burst count for DDR3 operations.
+   - DDRAM_ADDR (output [28:0]): Address for DDR3 access.
+   - DDRAM_DOUT (input [63:0]): Data output from DDR3.
+   - DDRAM_DOUT_READY (input): Indicates when output data is ready.
+   - DDRAM_RD (output): Read enable for DDR3.
+   - DDRAM_DIN (output [63:0]): Data input to DDR3.
+   - DDRAM_BE (output [7:0]): Byte enable for DDR3 writes.
+   - DDRAM_WE (output): Write enable for DDR3.
+
+56-67. SDRAM interface:
+   - SDRAM_CLK, SDRAM_CKE (output): Clock and Clock Enable for SDRAM.
+   - SDRAM_A (output [12:0]): Address bus for SDRAM.
+   - SDRAM_BA (output [1:0]): Bank Address for SDRAM.
+   - SDRAM_DQ (inout [15:0]): Data bus for SDRAM.
+   - SDRAM_DQML, SDRAM_DQMH (output): Data Mask Low/High for SDRAM.
+   - SDRAM_nCS, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nWE (output): Control signals for SDRAM (active low).
+
+68-76. Secondary SDRAM interface (ifdef MISTER_DUAL_SDRAM):
+   - SDRAM2_EN (input): Enable signal for secondary SDRAM.
+   - SDRAM2_CLK (output): Clock for secondary SDRAM.
+   - SDRAM2_A (output [12:0]): Address bus for secondary SDRAM.
+   - SDRAM2_BA (output [1:0]): Bank Address for secondary SDRAM.
+   - SDRAM2_DQ (inout [15:0]): Data bus for secondary SDRAM.
+   - SDRAM2_nCS, SDRAM2_nCAS, SDRAM2_nRAS, SDRAM2_nWE (output): Control signals for secondary SDRAM.
+
+77-82. UART interface:
+   - UART_CTS, UART_DSR (input): Clear To Send and Data Set Ready signals.
+   - UART_RTS, UART_DTR (output): Request To Send and Data Terminal Ready signals.
+   - UART_RXD (input): Receive data line.
+   - UART_TXD (output): Transmit data line.
+
+83-84. User port:
+   - USER_IN (input [6:0]): User input port.
+   - USER_OUT (output [6:0]): User output port.
+
+85. OSD_STATUS (input):
+    On-Screen Display status input.
+
+This module appears to be a comprehensive interface for a complex FPGA-based system, 
+likely for a retro gaming or multimedia application. It includes interfaces for video 
+output (VGA and HDMI), audio, memory (DDR3 and SDRAM), storage (SD card), user interface 
+(LEDs, buttons), and various other peripherals. The presence of framebuffer and palette 
+controls suggests advanced graphics capabilities.

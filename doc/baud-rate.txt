@@ -1,0 +1,54 @@
+To set the baud rate to 9600 in the simpleuart module, follow these steps:
+
+Determine Clock Frequency:
+
+Find out the clock frequency (clk) used by the UART module. For example, if the clock frequency is 50 MHz, use this value for the calculations.
+Calculate Baud Rate Divider:
+
+Use the formula to calculate the baud rate divider:
+makefile
+ 
+ divider = (clock_frequency / (16 * baud_rate)) - 1
+For a 50 MHz clock and a baud rate of 9600:
+makefile
+ 
+ divider = (50,000,000 / (16 * 9600)) - 1 ≈ 325
+Set cfg_divider:
+
+Assign the calculated value to cfg_divider in your testbench or design. For instance:
+scss
+ 
+ .cfg_divider(325)
+Update the Module:
+
+Ensure that cfg_divider is connected correctly when instantiating simpleuart.
+Example Instantiation
+In your top-level module or testbench, instantiate simpleuart like this:
+
+ 
+ simpleuart uart_inst (
+    .clk(clk),
+    .resetn(resetn),
+    .ser_tx(ser_tx),
+    .ser_rx(ser_rx),
+    .cfg_divider(325), // Set baud rate to 9600
+    .reg_dat_we(reg_dat_we),
+    .reg_dat_re(reg_dat_re),
+    .reg_dat_di(reg_dat_di),
+    .reg_dat_do(reg_dat_do),
+    .reg_dat_wait(reg_dat_wait),
+    .recv_buf_valid(recv_buf_valid),
+    .tdre(tdre)
+);
+Adjust for Different Clock Frequencies
+If your clock frequency differs, recalculate cfg_divider using the same formula and adjust accordingly.
+
+For 100 MHz Clock:
+
+divider = (100,000,000 / (16 * 9600)) - 1 ≈ 649
+
+For 25 MHz Clock:
+
+divider = (25,000,000 / (16 * 9600)) - 1 ≈ 162
+
+Adjust cfg_divider based on your system’s actual clock frequency.
