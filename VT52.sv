@@ -185,10 +185,9 @@ assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DD
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
-assign VGA_SCALER  = 0;
+assign VGA_SCALER = 0;
 assign VGA_DISABLE = 0;
 assign HDMI_FREEZE = 0;
-assign HDMI_BLACKOUT = 0;
 
 assign AUDIO_S = 0;
 assign AUDIO_L = 0;
@@ -211,44 +210,34 @@ localparam CONF_STR = {
 	"VT52;;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
-	"O[2],TV Mode,NTSC,PAL;",
-	"O[4:3],Noise,White,Red,Green,Blue;",
-	"-;",
-	"P1,Test Page 1;",
-	"P1-;",
-	"P1-, -= Options in page 1 =-;",
-	"P1-;",
-	"P1O[5],Option 1-1,Off,On;",
-	"d0P1F1,BIN;",
-	"H0P1O[10],Option 1-2,Off,On;",
-	"-;",
-	"P2,Test Page 2;",
-	"P2-;",
-	"P2-, -= Options in page 2 =-;",
-	"P2-;",
-	"P2S0,DSK;",
-	"P2O[7:6],Option 2,1,2,3,4;",
-	"-;",
+	"O[4:3],Text Color,White,Red,Green,Blue;",
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
-	"v,0;", // [optional] config version 0-99. 
-	        // If CONF_STR options are changed in incompatible way, then change version number too,
-			  // so all options will get default values on first start.
 	"V,v",`BUILD_DATE 
 };
+
+///////////////////////   CLOCKS   ///////////////////////////////
+
+wire clk_sys;
+wire locked;
+
+pll pll
+(
+	.refclk(CLK_50M),
+	.rst(0),
+	.outclk_0(CLK_VIDEO),
+	.locked(locked)
+);
 
 wire forced_scandoubler;
 wire   [1:0] buttons;
 wire [127:0] status;
-wire ps2_clk,ps2_data;
-//wire  [10:0] ps2_key;
+wire ps2_clk, ps2_data;
 
-// PS2DIV : the divider needs to be set so that clk_sys devided by 
-// this value (i.e. 1600) is between 10Khz and 16Kzh (in our case it is 12.5 kHz 20,000,000/1600)
-hps_io #(.CONF_STR(CONF_STR),.PS2DIV(1600)) hps_io
+hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1600)) hps_io
 (
-	.clk_sys(clk_sys),
+	.clk_sys(CLK_50M),
 	.HPS_BUS(HPS_BUS),
 	.EXT_BUS(),
 	.gamma_bus(),
@@ -259,105 +248,111 @@ hps_io #(.CONF_STR(CONF_STR),.PS2DIV(1600)) hps_io
 	.status(status),
 	.status_menumask({status[5]}),
 	
-//	.ps2_key(ps2_key),
 	.ps2_kbd_clk_out(ps2_clk),
 	.ps2_kbd_data_out(ps2_data)
 );
 
-///////////////////////   CLOCKS   ///////////////////////////////
-
-wire clk_sys;
-pll pll
-(
-	.refclk(CLK_50M),
-	.rst(0),
-	.outclk_0(clk_sys) // 20 Mhz
-);
-
 wire reset = RESET | status[0] | buttons[1];
 
-
-`ifdef BUILD_TERMINAL
+// Generate CE_PIXEL (25MHz)
+reg ce_pix;
+always @(posedge CLK_VIDEO) begin
+	reg [1:0] div;
+	
+	div <= div + 1'd1;
+	ce_pix <= !div;
+end
 
 wire HBlank;
 wire HSync;
 wire VBlank;
 wire VSync;
-wire ce_pix;
+wire ce_pix_out;
 wire video_out;
+
+assign CE_PIXEL = ce_pix;
+assign VGA_DE = ~(HBlank | VBlank);
+assign VGA_HS = HSync;
+assign VGA_VS = VSync;
+
+// Color selection enum using localparams
+localparam [1:0] 
+    COLOR_WHITE = 2'b00,
+    COLOR_RED   = 2'b01,
+    COLOR_GREEN = 2'b10,
+    COLOR_BLUE  = 2'b11;
+
+// Store the color selection from status register
+reg [7:0] R, G, B;
+reg [1:0] selected_color;
+
+// Clock domain crossing for status bits
+reg [1:0] status_color_sync1, status_color_sync2;
+always @(posedge CLK_VIDEO) begin
+    status_color_sync1 <= status[4:3];
+    status_color_sync2 <= status_color_sync1;
+end
+
+// Color selection logic (at CLK_VIDEO domain)
+always @(posedge CLK_VIDEO) begin
+    if (reset)
+        selected_color <= COLOR_WHITE;
+    else
+        selected_color <= status_color_sync2;  // Use synchronized status
+end
+
+// Color channel selection based on enum
+always @(posedge CLK_VIDEO) begin
+    case (selected_color)
+        COLOR_WHITE: begin
+            R <= {8{video_out}};
+            G <= {8{video_out}};
+            B <= {8{video_out}};
+        end
+        COLOR_RED: begin
+            R <= {8{video_out}};
+            G <= 8'd0;
+            B <= 8'd0;
+        end
+        COLOR_GREEN: begin
+            R <= 8'd0;
+            G <= {8{video_out}};
+            B <= 8'd0;
+        end
+        COLOR_BLUE: begin
+            R <= 8'd0;
+            G <= 8'd0;
+            B <= {8{video_out}};
+        end
+        default: begin
+            R <= 8'd0;
+            G <= 8'd0;
+            B <= 8'd0;
+        end
+    endcase
+end
+
+assign VGA_R = R;
+assign VGA_G = G;
+assign VGA_B = B;
 
 VT52_terminal vt52_inst
 (
-  .clk(clk_sys),
-  .hsync(HSync),
-  .vsync(VSync),
-  .hblank(HBlank),
-  .vblank(VBlank),
-  .video(video_out),
-  .led(LED_USER),
-  .ps2_data(ps2_data),
-  .ps2_clk(ps2_clk),
-  .pin_usb_p(USB_P),
-  .pin_usb_n(USB_N),
-  .pin_pu(USB_PU)
+    .clk_sys(CLK_50M),        // System clock for UART and keyboard
+    .clk_vid(CLK_VIDEO),      // Video clock for display
+    .reset(reset),
+    .ce_pix(ce_pix),
+    .hsync(HSync),
+    .vsync(VSync),
+    .hblank(HBlank),
+    .vblank(VBlank),
+    .video(video_out),
+    .led(LED_USER),
+    .ps2_data(ps2_data),
+    .ps2_clk(ps2_clk),
+    .pin_usb_p(USER_IN[0]),
+    .pin_usb_n(USER_IN[1]),
+    .pin_pu()
 );
-
-assign CLK_VIDEO = clk_sys;
-assign CE_PIXEL = 1;
-assign VGA_DE = ~(HBlank | VBlank);
-assign VGA_HS = HSync;
-assign VGA_VS = VSync;
-
-// Convert single-bit video output to 8-bit RGB
-assign VGA_R = {8{video_out}};
-assign VGA_G = {8{video_out}};
-assign VGA_B = {8{video_out}};
-
-`else
-
-wire [1:0] col = status[4:3];
-
-wire HBlank;
-wire HSync;
-wire VBlank;
-wire VSync;
-wire ce_pix;
-wire [7:0] video;
-
-VT52 VT52
-(
-	.clk(clk_sys),
-	.reset(reset),
-	
-	.pal(status[2]),
-	.scandouble(forced_scandoubler),
-
-	.ce_pix(ce_pix),
-
-	.HBlank(HBlank),
-	.HSync(HSync),
-	.VBlank(VBlank),
-	.VSync(VSync),
-
-	.video(video)
-);
-
-assign CLK_VIDEO = clk_sys;
-assign CE_PIXEL = ce_pix;
-
-assign VGA_DE = ~(HBlank | VBlank);
-assign VGA_HS = HSync;
-assign VGA_VS = VSync;
-assign VGA_G  = (!col || col == 2) ? video : 8'd0;
-assign VGA_R  = (!col || col == 1) ? video : 8'd0;
-assign VGA_B  = (!col || col == 3) ? video : 8'd0;
-
-reg  [26:0] act_cnt;
-always @(posedge clk_sys) act_cnt <= act_cnt + 1'd1; 
-assign LED_USER    = act_cnt[26]  ? act_cnt[25:18]  > act_cnt[7:0]  : act_cnt[25:18]  <= act_cnt[7:0];
-
-`endif
-
-
 
 endmodule

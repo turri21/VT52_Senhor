@@ -1,17 +1,23 @@
 module VT52_terminal 
 (
-   input       clk,
-   output wire hsync,
-   output wire vsync,
-   output wire hblank,
-   output wire vblank,
-   output wire video,
-   output wire led,
-   input       ps2_data,
-   input       ps2_clk,
-   inout       pin_usb_p,
-   inout       pin_usb_n,
-   output wire pin_pu
+   input             clk_sys,     // 50MHz system clock for peripherals
+   input             clk_vid,     // 25MHz video clock
+   input             reset,       // Active high reset
+   input             ce_pix,      // Pixel clock enable
+   
+   output wire       hsync,
+   output wire       vsync,
+   output wire       hblank,
+   output wire       vblank,
+   output wire       video,
+   output wire       led,
+   
+   input             ps2_data,
+   input             ps2_clk,
+   
+   inout             pin_usb_p,
+   inout             pin_usb_n,
+   output wire       pin_pu
 );
 
    localparam ROWS = 24;
@@ -20,45 +26,22 @@ module VT52_terminal
    localparam COL_BITS = 7;
    localparam ADDR_BITS = 11;
 
-   // clock generator outputs
-   wire clk_usb, reset_usb;
-   wire clk_vga, reset_vga;
+   // USB host detect
+   assign pin_pu = 1'b1;
 
-   // scroll
-   wire [ADDR_BITS-1:0] new_first_char;
-   wire new_first_char_wen;
-   wire [ADDR_BITS-1:0] first_char;
-   // cursor
-   wire [ROW_BITS-1:0]  new_cursor_y;
-   wire [COL_BITS-1:0]  new_cursor_x;
-   wire new_cursor_wen;
-   wire cursor_blink_on;
-   wire [ROW_BITS-1:0] cursor_y;
-   wire [COL_BITS-1:0] cursor_x;
-   // char buffer
-   wire [7:0] new_char;
-   wire [ADDR_BITS-1:0] new_char_address;
-   wire new_char_wen;
-   wire [ADDR_BITS-1:0] char_address;
-   wire [7:0] char;
-   // char rom
-   wire [11:0] char_rom_address;
-   wire [7:0] char_rom_data;
+   // UART divider for 115200 baud at 50MHz
+   wire [31:0] cfg_divider = 32'd434;  // 50MHz/115200 rounded
 
-   // video generator
-//   wire vblank, hblank;
+   // LED follows the cursor blink
+   assign led = cursor_blink_on;
 
-   // uart input/output
+   // System clock domain signals
    wire [7:0] uart_out_data;
    wire uart_out_valid;
    wire uart_out_ready;
-
    wire [7:0] uart_in_data;
    wire uart_in_valid;
    wire uart_in_ready;
-
-   // simpleuart specific signals
-   wire [31:0] cfg_divider;
    wire reg_dat_we;
    wire reg_dat_re;
    wire [7:0] reg_dat_di;
@@ -67,124 +50,176 @@ module VT52_terminal
    wire recv_buf_valid;
    wire tdre;
 
-   // LED follows the cursor blink
-   assign led = cursor_blink_on;
+   // Command handler outputs (system clock domain)
+   wire [ADDR_BITS-1:0] new_first_char;
+   wire new_first_char_wen;
+   wire [7:0] new_char;
+   wire [ADDR_BITS-1:0] new_char_address;
+   wire new_char_wen;
+   wire [COL_BITS-1:0] new_cursor_x;
+   wire [ROW_BITS-1:0] new_cursor_y;
+   wire new_cursor_wen;
 
-   // USB host detect
-   assign pin_pu = 1'b1;
+   // Video clock domain signals
+   wire [ADDR_BITS-1:0] first_char;
+   wire [COL_BITS-1:0] cursor_x;
+   wire [ROW_BITS-1:0] cursor_y;
+   wire cursor_blink_on;
+   wire [ADDR_BITS-1:0] char_address;
+   wire [7:0] char;
+   wire [11:0] char_rom_address;
+   wire [7:0] char_rom_data;
 
-   // Clock divider configuration (you may need to adjust this value)
-   assign cfg_divider = 32'd868; // Example value, adjust as needed
+   // Clock domain crossing registers
+   reg [7:0] char_data_sync1, char_data_sync2;
+   reg char_wen_sync1, char_wen_sync2;
+   reg [ADDR_BITS-1:0] char_addr_sync1, char_addr_sync2;
+   reg [COL_BITS-1:0] cursor_x_sync1, cursor_x_sync2;
+   reg [ROW_BITS-1:0] cursor_y_sync1, cursor_y_sync2;
+   reg cursor_wen_sync1, cursor_wen_sync2;
+   reg [ADDR_BITS-1:0] scroll_pos_sync1, scroll_pos_sync2;
+   reg scroll_wen_sync1, scroll_wen_sync2;
 
-   //
-   // Instantiate all modules
-   //
-   clock_generator clock_generator(.clk(clk),
-                                   .clk_usb(clk_usb),
-                                   .reset_usb(reset_usb),
-                                   .clk_vga(clk_vga),
-                                   .reset_vga(reset_vga)
-                                   );
+   // Synchronize control signals from system to video clock
+   always @(posedge clk_vid) begin
+      // Character buffer signals
+      char_data_sync1 <= new_char;
+      char_data_sync2 <= char_data_sync1;
+      char_wen_sync1 <= new_char_wen;
+      char_wen_sync2 <= char_wen_sync1;
+      char_addr_sync1 <= new_char_address;
+      char_addr_sync2 <= char_addr_sync1;
 
-   keyboard keyboard(.clk(clk),
-                     .reset(reset_usb),
-                     .ps2_data(ps2_data),
-                     .ps2_clk(ps2_clk),
-                     .data(uart_in_data),
-                     .valid(uart_in_valid),
-                     .ready(uart_in_ready)
-                     );
+      // Cursor signals
+      cursor_x_sync1 <= new_cursor_x;
+      cursor_x_sync2 <= cursor_x_sync1;
+      cursor_y_sync1 <= new_cursor_y;
+      cursor_y_sync2 <= cursor_y_sync1;
+      cursor_wen_sync1 <= new_cursor_wen;
+      cursor_wen_sync2 <= cursor_wen_sync1;
 
-   cursor #(.ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS))
-      cursor(.clk(clk_usb),
-             .reset(reset_usb),
-             .tick(vblank),
-             .x(cursor_x),
-             .y(cursor_y),
-             .blink_on(cursor_blink_on),
-             .new_x(new_cursor_x),
-             .new_y(new_cursor_y),
-             .wen(new_cursor_wen)
-            );
+      // Scroll signals
+      scroll_pos_sync1 <= new_first_char;
+      scroll_pos_sync2 <= scroll_pos_sync1;
+      scroll_wen_sync1 <= new_first_char_wen;
+      scroll_wen_sync2 <= scroll_wen_sync1;
+   end
 
-   simple_register #(.SIZE(ADDR_BITS))
-      scroll_register(.clk(clk_usb),
-                      .reset(reset_usb),
-                      .idata(new_first_char),
-                      .wen(new_first_char_wen),
-                      .odata(first_char)
-                      );
+   // System clock domain components
+   keyboard keyboard(
+      .clk(clk_sys),
+      .reset(reset),
+      .ps2_data(ps2_data),
+      .ps2_clk(ps2_clk),
+      .data(uart_in_data),
+      .valid(uart_in_valid),
+      .ready(uart_in_ready)
+   );
 
-   char_buffer char_buffer(.clk(clk_usb),
-                           .din(new_char),
-                           .waddr(new_char_address),
-                           .wen(new_char_wen),
-                           .raddr(char_address),
-                           .dout(char)
-                           );
+   simpleuart uart(
+      .clk(clk_sys),
+      .resetn(~reset),
+      .ser_tx(pin_usb_p),
+      .ser_rx(pin_usb_n),
+      .cfg_divider(cfg_divider),
+      .reg_dat_we(reg_dat_we),
+      .reg_dat_re(reg_dat_re),
+      .reg_dat_di(reg_dat_di),
+      .reg_dat_do(reg_dat_do),
+      .reg_dat_wait(reg_dat_wait),
+      .recv_buf_valid(recv_buf_valid),
+      .tdre(tdre)
+   );
 
-   char_rom char_rom(.clk(clk_usb),
-                     .addr(char_rom_address),
-                     .dout(char_rom_data)
-                     );
+   command_handler #(
+      .ROWS(ROWS),
+      .COLS(COLS),
+      .ROW_BITS(ROW_BITS),
+      .COL_BITS(COL_BITS),
+      .ADDR_BITS(ADDR_BITS)
+   ) command_handler(
+      .clk(clk_sys),
+      .reset(reset),
+      .data(reg_dat_do),
+      .valid(recv_buf_valid),
+      .ready(reg_dat_re),
+      .new_first_char(new_first_char),
+      .new_first_char_wen(new_first_char_wen),
+      .new_char(new_char),
+      .new_char_address(new_char_address),
+      .new_char_wen(new_char_wen),
+      .new_cursor_x(new_cursor_x),
+      .new_cursor_y(new_cursor_y),
+      .new_cursor_wen(new_cursor_wen)
+   );
 
-   video_generator #(.ROWS(ROWS),
-                     .COLS(COLS),
-                     .ROW_BITS(ROW_BITS),
-                     .COL_BITS(COL_BITS),
-                     .ADDR_BITS(ADDR_BITS))
-      video_generator(.clk(clk_vga),
-                      .reset(reset_vga),
-                      .hsync(hsync),
-                      .vsync(vsync),
-                      .video(video),
-                      .hblank(hblank),
-                      .vblank(vblank),
-                      .cursor_x(cursor_x),
-                      .cursor_y(cursor_y),
-                      .cursor_blink_on(cursor_blink_on),
-                      .first_char(first_char),
-                      .char_buffer_address(char_address),
-                      .char_buffer_data(char),
-                      .char_rom_address(char_rom_address),
-                      .char_rom_data(char_rom_data)
-                      );
+   // Video clock domain components
+   cursor #(
+      .ROW_BITS(ROW_BITS),
+      .COL_BITS(COL_BITS)
+   ) cursor(
+      .clk(clk_vid),
+      .reset(reset),
+      .tick(vblank),
+      .x(cursor_x),
+      .y(cursor_y),
+      .blink_on(cursor_blink_on),
+      .new_x(cursor_x_sync2),
+      .new_y(cursor_y_sync2),
+      .wen(cursor_wen_sync2)
+   );
 
-   simpleuart uart(.clk(clk_usb),
-                   .resetn(~reset_usb),  // Note: simpleuart uses active-low reset
-                   .ser_tx(pin_usb_p),   // Assuming pin_usb_p is for TX
-                   .ser_rx(pin_usb_n),   // Assuming pin_usb_n is for RX
-                   .cfg_divider(cfg_divider),
-                   .reg_dat_we(reg_dat_we),
-                   .reg_dat_re(reg_dat_re),
-                   .reg_dat_di(reg_dat_di),
-                   .reg_dat_do(reg_dat_do),
-                   .reg_dat_wait(reg_dat_wait),
-                   .recv_buf_valid(recv_buf_valid),
-                   .tdre(tdre)
-                   );
+   simple_register #(
+      .SIZE(ADDR_BITS)
+   ) scroll_register(
+      .clk(clk_vid),
+      .reset(reset),
+      .idata(scroll_pos_sync2),
+      .wen(scroll_wen_sync2),
+      .odata(first_char)
+   );
 
-   command_handler #(.ROWS(ROWS),
-                     .COLS(COLS),
-                     .ROW_BITS(ROW_BITS),
-                     .COL_BITS(COL_BITS),
-                     .ADDR_BITS(ADDR_BITS))
-      command_handler(.clk(clk_usb),
-                      .reset(reset_usb),
-                      .data(reg_dat_do),             // Use reg_dat_do from simpleuart
-                      .valid(recv_buf_valid),        // Use recv_buf_valid from simpleuart
-                      .ready(reg_dat_re),            // Connect to reg_dat_re of simpleuart
-                      .new_first_char(new_first_char),
-                      .new_first_char_wen(new_first_char_wen),
-                      .new_char(new_char),
-                      .new_char_address(new_char_address),
-                      .new_char_wen(new_char_wen),
-                      .new_cursor_x(new_cursor_x),
-                      .new_cursor_y(new_cursor_y),
-                      .new_cursor_wen(new_cursor_wen)
-                      );
+   char_buffer char_buffer(
+      .clk(clk_vid),
+      .din(char_data_sync2),
+      .waddr(char_addr_sync2),
+      .wen(char_wen_sync2),
+      .raddr(char_address),
+      .dout(char)
+   );
 
-   // Additional logic to handle UART data transmission
+   char_rom char_rom(
+      .clk(clk_vid),
+      .addr(char_rom_address),
+      .dout(char_rom_data)
+   );
+
+   video_generator #(
+      .ROWS(ROWS),
+      .COLS(COLS),
+      .ROW_BITS(ROW_BITS),
+      .COL_BITS(COL_BITS),
+      .ADDR_BITS(ADDR_BITS)
+   ) video_generator(
+      .clk(clk_vid),
+      .reset(reset),
+      .ce_pixel(ce_pix),
+      .hsync(hsync),
+      .vsync(vsync),
+      .video(video),
+      .hblank(hblank),
+      .vblank(vblank),
+      .cursor_x(cursor_x),
+      .cursor_y(cursor_y),
+      .cursor_blink_on(cursor_blink_on),
+      .first_char(first_char),
+      .char_buffer_address(char_address),
+      .char_buffer_data(char),
+      .char_rom_address(char_rom_address),
+      .char_rom_data(char_rom_data)
+   );
+
+   // UART data path connections
    assign reg_dat_we = uart_in_valid & uart_in_ready;
    assign reg_dat_di = uart_in_data;
    assign uart_in_ready = ~reg_dat_wait & tdre;

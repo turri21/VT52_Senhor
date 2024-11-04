@@ -61,108 +61,119 @@ manages character data retrieval from a buffer and ROM to render text on the scr
 text-based displays with basic cursor functionality and scrolling.
 
  */
-
-module video_generator
+ 
+ module video_generator
   #(parameter ROWS = 24,
     parameter COLS = 80,
-    // XXX These could probably be calculated from the above
     parameter ROW_BITS = 5,
     parameter COL_BITS = 7,
-    parameter ADDR_BITS = 11
-    // first address outside the visible area
-    )
+    parameter ADDR_BITS = 11)
    (
-    input clk,
-    input reset,
+    input  wire        clk,         // 50MHz system clock
+    input  wire        reset,
+    input  wire        ce_pixel,    // Pixel clock enable
+    
     // video output
-    output reg hsync,
-    output reg vsync,
-    output reg video,
-    // video output extra info
-    output reg hblank,
-    output reg vblank,
+    output reg         hsync,
+    output reg         vsync,
+    output reg         video,
+    output reg         hblank,
+    output reg         vblank,
+    
     // cursor
-    input [COL_BITS-1:0] cursor_x,
-    input [ROW_BITS-1:0] cursor_y,
-    input cursor_blink_on,
+    input  wire [COL_BITS-1:0] cursor_x,
+    input  wire [ROW_BITS-1:0] cursor_y,
+    input  wire        cursor_blink_on,
+    
     // scrolling
-    input [ADDR_BITS-1:0] first_char,
+    input  wire [ADDR_BITS-1:0] first_char,
+    
     // char buffer
     output wire [ADDR_BITS-1:0] char_buffer_address,
-    input [7:0] char_buffer_data,
+    input  wire [7:0]  char_buffer_data,
+    
     // char rom
     output wire [11:0] char_rom_address,
-    input [7:0] char_rom_data
+    input  wire [7:0]  char_rom_data
     );
+
    localparam PAST_LAST_ROW = ROWS * COLS;
-   // VGA Signal 640x400 @ 70 Hz timing
-   // from http://tinyvga.com/vga-timing/640x400@70Hz
-   // Total size, visible size, front and back porches and sync pulse size
-   // clk is 24Mhz (half USB...), so about what we need (around 25Mhz)
-   localparam hbits = 10;
-   localparam hpixels = 800;
-   localparam hbp = 48;
-   localparam hvisible = 640;
-   localparam hfp = 16;
-   localparam hpulse = 96;
-   // Added 8 to vbp and vfp to compensate for the missing character row
-   // (25 * 16 == 400, we are using 24 rows so we are 16 pixels short)
-   localparam vbits = 9;
-   localparam vlines = 449;
-   localparam vbp = 35 + 8;
-   localparam vvisible = 400 - 16;
-   localparam vfp = 12 + 8;
-   localparam vpulse = 2;
-   // sync polarity
-   localparam hsync_on = 1'b0;
-   localparam vsync_on = 1'b1;
+
+   // Standard VGA 640x480@60Hz timing
+   localparam hbits = 10;          // Need 10 bits to count up to 800
+   localparam hpixels = 800;       // Total horizontal pixels
+   localparam hbp = 48;            // Horizontal back porch
+   localparam hvisible = 640;      // Visible horizontal pixels
+   localparam hfp = 16;            // Horizontal front porch
+   localparam hpulse = 96;         // Horizontal sync pulse width
+   
+   localparam vbits = 10;          // Need 10 bits to count up to 525
+   localparam vlines = 525;        // Total vertical lines
+   localparam vbp = 33;            // Vertical back porch
+   localparam vvisible = 480;      // Visible vertical lines
+   localparam vfp = 10;            // Vertical front porch
+   localparam vpulse = 2;          // Vertical sync pulse width
+
+   // Vertical offset to center display (each row is 16 pixels high)
+   localparam voffset = ((vvisible - (ROWS * 16)) >> 1);
+   
+   // sync polarity for standard VGA
+   localparam hsync_on = 1'b0;     // Horizontal sync is active low
+   localparam vsync_on = 1'b0;     // Vertical sync is active low
    localparam hsync_off = ~hsync_on;
    localparam vsync_off = ~vsync_on;
+   
    // video polarity
    localparam video_on = 1'b1;
    localparam video_off = ~video_on;
 
-   // These are to combine the chars & the cursor for video output
+   // Video generation signals
    reg is_under_cursor;
    reg cursor_pixel;
    reg char_pixel;
    reg combined_pixel;
 
-   // horizontal & vertical counters
+   // Counters for horizontal and vertical timing
    reg [hbits-1:0] hc, next_hc;
    reg [vbits-1:0] vc, next_vc;
-   // syncs and blanks
+   
+   // Next state signals for sync and blank
    reg next_hblank, next_vblank, next_hsync, next_vsync;
-   // character generation
+   
+   // Character position tracking
    reg [ROW_BITS-1:0] row, next_row;
    reg [COL_BITS-1:0] col, next_col;
-   // these count the rows and cols of pixels inside a char (8x16)
-   reg [2:0] colc, next_colc;
-   reg [3:0] rowc, next_rowc;
-   // maintain the next address to the char buffer
+   
+   // Pixel position within character (8x16 characters)
+   reg [2:0] colc, next_colc;      // 0-7 for 8 pixels wide
+   reg [3:0] rowc, next_rowc;      // 0-15 for 16 pixels high
+   
+   // Character buffer addressing
    reg [ADDR_BITS-1:0] char, next_char;
 
-   // we must use next_char instead of char because we need it ready for
-   // the next clock cycle
+   // Memory interface assignments
    assign char_buffer_address = next_char;
    // The address of the char row in rom is formed with the char and the row offset
    // we can get away with the addition here because the number of rows
    // in this font is a power of 2 (16 in this case)
-   assign char_rom_address = { char_buffer_data, rowc };
+   assign char_rom_address = {char_buffer_data, rowc};
 
-   //
-   // horizontal & vertical counters, syncs and blanks
-   //
+   // Calculate if current position is in visible text area
+   wire in_visible_area = !next_hblank && !next_vblank &&
+                         (next_vc >= (vbp + voffset)) &&
+                         (next_vc < (vbp + voffset + (ROWS * 16)));
+
+   // Horizontal and vertical counters with sync and blank generation
    always @(posedge clk) begin
       if (reset) begin
          hc <= 0;
          vc <= 0;
          hsync <= hsync_off;
          vsync <= vsync_off;
-         hblank <= 1;
-         vblank <= 1;
+         hblank <= 1'b1;
+         vblank <= 1'b1;
       end
-      else begin
+      else if (ce_pixel) begin
          hc <= next_hc;
          vc <= next_vc;
          hsync <= next_hsync;
@@ -172,24 +183,27 @@ module video_generator
       end
    end
 
+   // Next state calculation for counters and sync signals
    always @(*) begin
-      if (hc == hpixels) begin
+      if (hc == hpixels - 1) begin
          next_hc = 0;
-         next_vc = (vc == vlines)? 0 : vc + 1;
+         next_vc = (vc == vlines - 1) ? 0 : vc + 1;
       end
       else begin
          next_hc = hc + 1;
          next_vc = vc;
       end
-      next_hsync = (next_hc >= hbp + hvisible + hfp)? hsync_on : hsync_off;
-      next_vsync = (next_vc >= vbp + vvisible + vfp)? vsync_on : vsync_off;
-      next_hblank = (next_hc < hbp || next_hc >= hbp + hvisible);
-      next_vblank = (next_vc < vbp || next_vc >= vbp + vvisible);
+      
+      // Generate sync pulses
+      next_hsync = (next_hc >= (hbp + hvisible + hfp)) ? hsync_on : hsync_off;
+      next_vsync = (next_vc >= (vbp + vvisible + vfp)) ? vsync_on : vsync_off;
+      
+      // Generate blank signals
+      next_hblank = (next_hc < hbp) || (next_hc >= (hbp + hvisible));
+      next_vblank = (next_vc < vbp) || (next_vc >= (vbp + vvisible));
    end
 
-   //
-   // character generation
-   //
+   // Character and row/column position tracking
    always @(posedge clk) begin
       if (reset) begin
          row <= 0;
@@ -198,7 +212,7 @@ module video_generator
          colc <= 0;
          char <= 0;
       end
-      else begin
+      else if (ce_pixel) begin
          row <= next_row;
          col <= next_col;
          rowc <= next_rowc;
@@ -207,73 +221,61 @@ module video_generator
       end
    end
 
+   // Next state calculation for character position
    always @(*) begin
-      if (vblank) begin
+      if (next_vc < (vbp + voffset)) begin
+         // Before visible area
          next_row = 0;
          next_rowc = 0;
          next_col = 0;
          next_colc = 0;
          next_char = first_char;
       end
-      // we need next_hblank here because we must detect the edge
-      // in hblank & prepare for the row
       else if (next_hblank) begin
-         // some nice defaults
          next_row = row;
          next_rowc = rowc;
          next_col = 0;
          next_colc = 0;
-         next_char = char;
+         next_char = char - col;  // Return to start of current row
 
-         // only do this once per line (positive hblank edge)
-         if (hblank == 0) begin
+         if (hblank == 0) begin  // Positive edge of hblank
             if (rowc == 15) begin
-               // we are moving to the next row, so char
-               // is already set at the correct value, unless
-               // we reached the end of the buffer
-               next_row = row + 1;
-               next_rowc = 0;
-               if (char == PAST_LAST_ROW) begin
-                  next_char = 0;
-               end
+                next_row = row + 1;
+                next_rowc = 0;
+                next_char = (char - col) + COLS;  // Move to next row of characters
             end
             else begin
-               // we are still on the same row, so
-               // go back to the first char in this line
-               next_char = char - COLS;
-               next_rowc = rowc + 1;
+                next_rowc = rowc + 1;
+                // Keep same character address for next scanline
             end
          end
       end
       else begin
-         // some nice defaults
          next_row = row;
          next_rowc = rowc;
          next_col = col;
-         next_colc = colc+1;
+         next_colc = colc + 1;
          next_char = char;
 
          if (colc == 7) begin
-            // prepare to read next char (it takes two cycles,
-            // one to read from ram & one to read from rom)
-            // Since the memory bus runs at twice the pixel clock rate
-            // we can do it just at the last pixel
-            next_char = char+1;
-            // move to the next char
-            next_col = col+1;
+            next_char = char + 1;
+            next_col = col + 1;
             next_colc = 0;
          end
-      end // else: !if(next_hblank)
-   end // always @ (*)
+      end
+   end
 
    //
    // pixel out (char & cursor combination)
    //
    always @(posedge clk) begin
-      if (reset) video <= video_off;
-      else video <= combined_pixel;
+      if (reset) 
+         video <= video_off;
+      else if (ce_pixel)
+         video <= in_visible_area ? combined_pixel : video_off;
    end
 
+   // Pixel combination logic
    always @(*) begin
       // cursor pixel: invert video when we are under the cursor (if it's blinking)
       is_under_cursor = (cursor_x == col) & (cursor_y == row);
@@ -281,9 +283,13 @@ module video_generator
       // char pixel: read from the appropiate char, row & col on the font ROM,
       // the pixels LSB->MSB ordered
       char_pixel = char_rom_data[7 - colc];
-      // combine, but only emit video on non-blanking periods
-      combined_pixel = (next_hblank || next_vblank)?
-                       video_off :
-                       char_pixel ^ cursor_pixel;
+      
+      // Combine character and cursor
+      combined_pixel = char_pixel ^ cursor_pixel;
+      // // combine, but only emit video on non-blanking periods
+      // combined_pixel = (next_hblank || next_vblank)?
+      //                  video_off :
+      //                  char_pixel ^ cursor_pixel;
    end
-endmodule // video_generator
+
+endmodule
