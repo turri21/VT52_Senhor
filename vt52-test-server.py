@@ -219,9 +219,16 @@ class VT52Demo:
 
         # Fill screen
         for i in range(1, 30):
-            self.connection.send(f"This is line {i} of scrolling text test\r\n".encode())
+#            self.connection.send(f"This is line {i} of scrolling text test\r\n".encode())
+            self.connection.send(f"\n".encode())
             time.sleep(0.2)
         
+        time.sleep(3)
+
+        self.connection.send(ESC + CURSOR_HOME)
+        self.connection.send(ESC + ERASE_SCREEN)
+        self.connection.send(ESC + CURSOR_HOME)
+
         # Demonstrate reverse linefeed
         self.position_cursor(12, 1)
         for i in range(5):
@@ -229,9 +236,19 @@ class VT52Demo:
             self.connection.send(b"*** Reverse linefeed line ***\r\n")
             time.sleep(0.5)
 
+        time.sleep(3)
+
+        self.connection.send(ESC + CURSOR_HOME)
+        self.connection.send(ESC + ERASE_SCREEN)
+        self.connection.send(ESC + CURSOR_HOME)
+
+
     def run_demo(self) -> None:
         """Run through all demos"""
         try:
+            self.connection.send('A'.encode())
+
+
             # Clear screen and home cursor
             self.connection.send(ESC + CURSOR_HOME)
             self.connection.send(ESC + ERASE_SCREEN)
@@ -256,6 +273,9 @@ class VT52Demo:
             
             time.sleep(3)
             
+            self.demo_scrolling()
+            time.sleep(3)
+
             self.demo_cursor_movement()
             time.sleep(1)
             
@@ -264,8 +284,6 @@ class VT52Demo:
             
             self.demo_screen_clear()
             time.sleep(1)
-            
-            self.demo_scrolling()
             
             # Final message
             self.position_cursor(23, 1)
