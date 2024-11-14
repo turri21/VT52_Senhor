@@ -50,7 +50,7 @@ def create_bitmap(data):
     return img
 
 def main():
-    font_file = 'mem/terminus_816_latin1.hex'  # Make sure this file exists
+    font_file = 'rtl/mem/character_set.hex'  # Make sure this file exists
     data = read_font_file(font_file)
     if len(data) != 4096:
         print(f"Error: Expected 4096 bytes, but got {len(data)} bytes.")

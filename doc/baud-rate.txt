@@ -1,54 +1,59 @@
-To set the baud rate to 9600 in the simpleuart module, follow these steps:
+// Baud Rate Calculation Formula for 25MHz clock:
+// baud_div = (25_000_000 / baud_rate) - 1
 
-Determine Clock Frequency:
+localparam CLOCK_FREQ = 25_000_000;
 
-Find out the clock frequency (clk) used by the UART module. For example, if the clock frequency is 50 MHz, use this value for the calculations.
-Calculate Baud Rate Divider:
+// Common baud rates and their divider values for 25MHz:
+localparam BAUD_110_DIV    = (CLOCK_FREQ / 110) - 1;    // 227272
+localparam BAUD_300_DIV    = (CLOCK_FREQ / 300) - 1;    // 83333
+localparam BAUD_1200_DIV   = (CLOCK_FREQ / 1200) - 1;   // 20833
+localparam BAUD_2400_DIV   = (CLOCK_FREQ / 2400) - 1;   // 10416
+localparam BAUD_4800_DIV   = (CLOCK_FREQ / 4800) - 1;   // 5208
+localparam BAUD_9600_DIV   = (CLOCK_FREQ / 9600) - 1;   // 2603
+localparam BAUD_19200_DIV  = (CLOCK_FREQ / 19200) - 1;  // 1301
+localparam BAUD_38400_DIV  = (CLOCK_FREQ / 38400) - 1;  // 650
+localparam BAUD_57600_DIV  = (CLOCK_FREQ / 57600) - 1;  // 433
+localparam BAUD_115200_DIV = (CLOCK_FREQ / 115200) - 1; // 216
 
-Use the formula to calculate the baud rate divider:
-makefile
- 
- divider = (clock_frequency / (16 * baud_rate)) - 1
-For a 50 MHz clock and a baud rate of 9600:
-makefile
- 
- divider = (50,000,000 / (16 * 9600)) - 1 ≈ 325
-Set cfg_divider:
-
-Assign the calculated value to cfg_divider in your testbench or design. For instance:
-scss
- 
- .cfg_divider(325)
-Update the Module:
-
-Ensure that cfg_divider is connected correctly when instantiating simpleuart.
-Example Instantiation
-In your top-level module or testbench, instantiate simpleuart like this:
-
- 
- simpleuart uart_inst (
-    .clk(clk),
-    .resetn(resetn),
-    .ser_tx(ser_tx),
-    .ser_rx(ser_rx),
-    .cfg_divider(325), // Set baud rate to 9600
-    .reg_dat_we(reg_dat_we),
-    .reg_dat_re(reg_dat_re),
-    .reg_dat_di(reg_dat_di),
-    .reg_dat_do(reg_dat_do),
-    .reg_dat_wait(reg_dat_wait),
-    .recv_buf_valid(recv_buf_valid),
-    .tdre(tdre)
+// Example instantiation for VT52 at 9600 baud with 25MHz clock
+vt52_8251_uart uart (
+    .clk(clk),                // 25MHz
+    .rst_n(rst_n),
+    
+    // 9600 baud configuration
+    .tx_baud_div(16'd2603),   // 9600 baud
+    .rx_baud_div(16'd2603),   // 9600 baud
+    
+    // Standard VT52 settings
+    .tx_char_length(2'b11),   // 8 bits
+    .rx_char_length(2'b11),   // 8 bits
+    .tx_stop_bits(2'b00),     // 1 stop bit
+    .rx_stop_bits(2'b00),     // 1 stop bit
+    .tx_parity_mode(2'b00),   // No parity
+    .rx_parity_mode(2'b00),   // No parity
+    
+    // Other connections...
 );
-Adjust for Different Clock Frequencies
-If your clock frequency differs, recalculate cfg_divider using the same formula and adjust accordingly.
 
-For 100 MHz Clock:
+// Actual baud rate calculations for 25MHz clock:
+// For 9600 baud:
+// actual_baud = 25_000_000 / (2603 + 1)
+// actual_baud = 9600.12 Hz (0.0012% error)
 
-divider = (100,000,000 / (16 * 9600)) - 1 ≈ 649
-
-For 25 MHz Clock:
-
-divider = (25,000,000 / (16 * 9600)) - 1 ≈ 162
-
-Adjust cfg_divider based on your system’s actual clock frequency.
+// Timing at 9600 baud with 25MHz clock:
+// Bit time = 1/9600 seconds = 104.167 microseconds
+// Clock cycles per bit = 25_000_000 / 9600 = 2604 cycles
+//
+// One character timing ('A' = 0x41):
+// Bit       Cycles    Time
+// Start(0)  2604      104.16µs
+// D0(1)     2604      104.16µs
+// D1(0)     2604      104.16µs
+// D2(0)     2604      104.16µs
+// D3(0)     2604      104.16µs
+// D4(0)     2604      104.16µs
+// D5(0)     2604      104.16µs
+// D6(1)     2604      104.16µs
+// D7(0)     2604      104.16µs
+// Stop(1)   2604      104.16µs
+// Total: 26040 cycles = 1.0416ms per character

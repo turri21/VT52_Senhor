@@ -16,7 +16,7 @@ set_global_assignment -name VERILOG_FILE rtl/keymap_rom.v
 set_global_assignment -name VERILOG_FILE rtl/pll.v
 set_global_assignment -name VERILOG_FILE rtl/simpleuart.v
 set_global_assignment -name VERILOG_FILE rtl/simple_register.v
-set_global_assignment -name VERILOG_FILE rtl/tr1402a-uart.v
+set_global_assignment -name VERILOG_FILE rtl/vt52-8251-uart.v
 set_global_assignment -name VERILOG_FILE rtl/video_generator.v
 set_global_assignment -name VERILOG_FILE rtl/vt52_terminal.v
 set_global_assignment -name CDF_FILE jtag.cdf

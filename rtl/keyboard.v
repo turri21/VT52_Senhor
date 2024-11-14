@@ -1,69 +1,30 @@
-/*
-
-The `keyboard` module processes input from a PS/2 keyboard and outputs the corresponding ASCII 
-data and validity signal. It handles keypresses, key releases, and special key events, including 
-modifiers and escape sequences. Here’s a detailed breakdown:
-
-### Parameters:
-- **`ROW_BITS`**: Number of bits used for the row coordinate (not directly used in this module but potentially for a larger design context).
-- **`COL_BITS`**: Number of bits used for the column coordinate (similarly, might be used in a broader context).
-
-### Inputs and Outputs:
-- **Inputs**:
-  - **`clk`**: The clock signal driving the module.
-  - **`reset`**: Resets the module and clears internal states.
-  - **`ps2_data`**: The data line from the PS/2 keyboard.
-  - **`ps2_clk`**: The clock line from the PS/2 keyboard.
-  - **`ready`**: A signal indicating if the output data can be processed.
-
-- **Outputs**:
-  - **`data`**: The ASCII value of the key pressed or a special character.
-  - **`valid`**: Indicates if the `data` output is valid and ready to be read.
-
-### Internal Signals and Registers:
-- **`state`**: Holds the current state of the module using one-hot encoding.
-  - **`state_idle`**: The default state, reading from the PS/2 bus.
-  - **`state_keymap`**: Reads the keymap ROM to determine the ASCII value.
-  - **`state_key_down`**: Handles key down events.
-  - **`state_key_up`**: Handles key up events.
-  - **`state_esc_char`**: Sends characters prefixed with ESC if meta (Alt) key is pressed.
-
-- **`ps2_old_clks`**: Stores the previous state of the `ps2_clk` signal to detect rising edges.
-- **`ps2_raw_data`**: Holds the raw data received from the PS/2 data line.
-- **`ps2_count`**: Counts the number of bits received.
-- **`ps2_byte`**: The processed byte value from the PS/2 data.
-- **`ps2_break_keycode`**: Flag indicating if the current keycode is a break code (key release).
-- **`ps2_long_keycode`**: Flag indicating if the keycode is a long keycode.
-- **`modifier_pressed`**: Tracks the status of modifier keys (Shift, Control, Meta).
-- **`caps_lock_active`**: Indicates if Caps Lock is active.
-- **`special_data`**: Holds special data to be sent after ESC when meta is pressed.
-
-### Key Components:
-1. **Keymap ROM**:
-   - **`keymap_rom`**: A ROM module that maps the keycode to ASCII or special codes based on the `keymap_address`.
-
-2. **State Machine**:
-   - **`state_idle`**: Monitors the PS/2 clock to detect and read keycodes. It processes the keycode after receiving 11 bits (start bit, 8 data bits, parity, and stop bits).
-   - **`state_keymap`**: After receiving a keycode, this state looks up the keymap ROM to determine the actual character or action.
-   - **`state_key_up`**: Handles key release events and updates the modifier key statuses.
-   - **`state_key_down`**: Processes key press events, applies modifiers, and handles special cases like ESC and meta keys.
-   - **`state_esc_char`**: Sends special characters after an ESC sequence if meta is pressed.
-
-### Functionality:
-- **Reading Keycodes**: The module reads keycodes from the PS/2 interface using a state machine that detects key press and release events.
-- **Handling Modifiers**: It tracks modifier keys (Shift, Control, Meta) and adjusts the output accordingly.
-- **Key Mapping**: Uses a keymap ROM to convert keycodes into ASCII values, taking into account modifiers and special key states.
-- **Special Handling**: Handles ESC sequences and special characters when the meta key is pressed.
-
-### Summary:
-The `keyboard` module integrates the PS/2 keyboard interface with a state machine to process 
-keycodes, handle key presses and releases, manage modifier keys, and generate ASCII output. 
-It includes a keymap ROM to map keycodes to characters and handles special cases like ESC 
-sequences when modifier keys are active. This design allows for efficient keyboard input 
-processing in digital systems.
-
-*/
-
+/* ================================================================
+ * VT52
+ *
+ * Copyright (C) 2024 Fred Van Eijk
+ *
+ * Permission is hereby granted, free of charge, to any person 
+ * obtaining a copy of this software and associated documentation 
+ * files (the "Software"), to deal in the Software without 
+ * restriction, including without limitation the rights to use, 
+ * copy, modify, merge, publish, distribute, sublicense, and/or 
+ * sell copies of the Software, and to permit persons to whom 
+ * the Software is furnished to do so, subject to the following 
+ * conditions:
+ * 
+ * The above copyright notice and this permission notice shall be 
+ * included in all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES 
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND 
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT 
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR 
+ * OTHER DEALINGS IN THE SOFTWARE.
+ * ================================================================
+ */
 
 module keyboard
 (

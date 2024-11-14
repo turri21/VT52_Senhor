@@ -1,6 +1,7 @@
+#!/usr/bin/env python3
+
 import socket
 import time
-import random
 import threading
 import socketserver
 import serial
@@ -18,10 +19,6 @@ REVERSE_LINEFEED = b'I'
 ERASE_TO_EOL = b'K'
 ERASE_SCREEN = b'J'
 CURSOR_POS = b'Y'
-ENTER_ALT_KEYPAD = b'='
-EXIT_ALT_KEYPAD = b'>'
-ENTER_GRAPHICS = b'F'
-EXIT_GRAPHICS = b'G'
 
 class VT52Connection:
     """Base class for VT52 communication"""
@@ -64,7 +61,7 @@ class TelnetConnection(VT52Connection):
         self.socket.close()
 
 class VT52Demo:
-    """VT52 terminal demonstration"""
+    """VT52 terminal testing and demonstration"""
     def __init__(self, connection: VT52Connection):
         self.connection = connection
 
@@ -72,228 +69,294 @@ class VT52Demo:
         """Position cursor at row,col (1-based)"""
         self.connection.send(ESC + CURSOR_POS + bytes([row + 31]) + bytes([col + 31]))
 
+    def test_control_chars(self) -> None:
+        """Test basic control characters"""
+        print("Testing control characters...")
+        
+        self.connection.send(ESC + CURSOR_HOME)
+        self.connection.send(ESC + ERASE_SCREEN)
+        self.position_cursor(1, 1)
+        self.connection.send(b'Control Characters Test:\r\n\n')
+        
+        # Test backspace behavior
+        self.connection.send(b'Backspace Test: ')
+        self.connection.send(b'ABC')          # Write ABC
+        self.connection.send(b'\x08')         # Backspace
+        self.connection.send(b'\x08')         # Backspace
+        self.connection.send(b'XY')           # Should show AXY
+        self.connection.send(b'\r\n')
+        
+        # Test line feed and carriage return
+        self.connection.send(b'LF/CR Test:\r\n')
+        self.connection.send(b'First')
+        self.connection.send(b'\n')           # Line feed
+        self.connection.send(b'Second')
+        self.connection.send(b'\r')           # Carriage return
+        self.connection.send(b'Third')        # Should overwrite 'Second'
+        self.connection.send(b'\r\n\n')
+        
+        # Test tabs
+        self.connection.send(b'Tab Test:\r\n')
+        self.connection.send(b'1\t2\t3\t4')   # Should tab every 8 spaces
+        time.sleep(2)
+
+    def test_cursor_positioning(self) -> None:
+        """Test all cursor positioning commands"""
+        print("Testing cursor positioning...")
+        
+        self.connection.send(ESC + CURSOR_HOME)
+        self.connection.send(ESC + ERASE_SCREEN)
+        time.sleep(0.5)  # Allow for erase operation
+        
+        self.position_cursor(1, 1)
+        self.connection.send(b'Cursor Positioning Test:\r\n\n')
+        
+        # Test absolute positioning
+        self.connection.send(b'Testing absolute cursor positioning...\r\n')
+        positions = [(5,10), (5,30), (10,10), (10,30), (15,10), (15,30)]
+        for y, x in positions:
+            self.position_cursor(y, x)
+            self.connection.send(b'X')
+            time.sleep(0.2)  # Allow for cursor movement
+        
+        time.sleep(1)
+        
+        # Test relative movements
+        self.position_cursor(12, 20)
+        self.connection.send(b'O')  # Start point
+        time.sleep(0.2)
+        
+        # Test each direction with delays
+        for _ in range(3):
+            self.connection.send(ESC + CURSOR_UP)
+            time.sleep(0.2)
+            self.connection.send(b'^')
+        
+        for _ in range(3):
+            self.connection.send(ESC + CURSOR_RIGHT)
+            time.sleep(0.2)
+            self.connection.send(b'>')
+        
+        for _ in range(3):
+            self.connection.send(ESC + CURSOR_DOWN)
+            time.sleep(0.2)
+            self.connection.send(b'v')
+        
+        for _ in range(3):
+            self.connection.send(ESC + CURSOR_LEFT)
+            time.sleep(0.2)
+            self.connection.send(b'<')
+            
+        time.sleep(2)
+
+    def test_erase_functions(self) -> None:
+        """Test erase functions"""
+        print("Testing erase functions...")
+        
+        self.connection.send(ESC + CURSOR_HOME)
+        self.connection.send(ESC + ERASE_SCREEN)
+        time.sleep(0.5)  # Allow for erase operation
+        
+        self.position_cursor(1, 1)
+        self.connection.send(b'Erase Functions Test:\r\n\n')
+        
+        # Fill screen with test pattern
+        for y in range(5, 20):
+            self.position_cursor(y, 1)
+            self.connection.send(f"Line {y:02d}: Testing erase functions...".encode())
+            time.sleep(0.1)  # Prevent buffer overflow
+        
+        time.sleep(2)
+        
+        # Test erase to end of line
+        self.connection.send(b'\r\nTesting Erase to End of Line (ESC K):')
+        self.position_cursor(10, 20)
+        self.connection.send(ESC + ERASE_TO_EOL)
+        time.sleep(0.5)  # Allow for erase operation
+        self.position_cursor(10, 40)
+        self.connection.send(b'<-- Erased to here')
+        
+        time.sleep(2)
+        
+        # Test erase screen and verify home
+        self.connection.send(b'\r\nTesting Erase Screen (ESC J) - should home cursor:')
+        self.position_cursor(15, 20)
+        self.connection.send(ESC + ERASE_SCREEN)
+        time.sleep(0.5)  # Allow for erase operation
+        self.connection.send(b'This should be at home position (1,1)')
+        
+        time.sleep(2)
+
+    def test_scroll_behavior(self) -> None:
+        """Test scrolling behavior with hardware timing considerations"""
+        print("Testing scroll behavior...")
+        
+        self.connection.send(ESC + CURSOR_HOME)
+        self.connection.send(ESC + ERASE_SCREEN)
+        time.sleep(0.5)  # Allow for erase operation
+        
+        self.position_cursor(1, 1)
+        self.connection.send(b'Scroll Behavior Test:\r\n\n')
+        
+        self.connection.send(ESC + CURSOR_HOME)
+        self.connection.send(ESC + ERASE_SCREEN)
+        time.sleep(0.5)  # Allow for erase operation
+
+        # Fill screen with numbered lines
+        for i in range(1, 23):
+            self.position_cursor(i, 1)
+            self.connection.send(f"Line {i:02d}: test content".encode())
+            time.sleep(0.1)  # Prevent buffer overflow
+        
+        time.sleep(2)
+        
+        # Test forward scroll with hardware timing
+        self.connection.send(b'\r\nTesting forward scroll...')
+
+        self.connection.send(ESC + CURSOR_HOME)
+        self.connection.send(ESC + ERASE_SCREEN)
+        time.sleep(0.5)  # Allow for erase operation
+
+
+        self.position_cursor(22, 1)
+        
+        for i in range(7):
+            self.connection.send(f"New line {i} - testing scroll\r\n".encode())
+            time.sleep(1.0)  # Allow for hardware scroll operation
+        
+        time.sleep(2)
+        self.connection.send(ESC + ERASE_SCREEN)
+        time.sleep(0.5)
+        
+        # Test reverse scroll
+        self.connection.send(b'Testing reverse scroll (ESC I):\r\n')
+        self.position_cursor(10, 1)
+        
+        for i in range(5):
+            self.connection.send(ESC + REVERSE_LINEFEED)
+            time.sleep(1.0)  # Allow for hardware scroll operation
+            self.connection.send(f"Reverse scroll line {i+1}\r".encode())
+        
+        time.sleep(2)
+
     def demo_cursor_movement(self) -> None:
-        """Demonstrate cursor movement commands"""
+        """Demonstrate cursor movement with box drawing"""
         print("Demonstrating cursor movement...")
         
         self.connection.send(ESC + CURSOR_HOME)
         self.connection.send(ESC + ERASE_SCREEN)
-        self.connection.send(ESC + CURSOR_HOME)
+        time.sleep(0.5)
+
+        self.position_cursor(1, 1)
+        self.connection.send(b'Box Drawing Demo:\r\n\n')
 
         # Draw a box using cursor movements
         self.position_cursor(5, 10)
-        for i in range(10):
+        
+        # Top line with delays
+        for _ in range(10):
             self.connection.send(b'*')
-            self.connection.send(ESC + CURSOR_RIGHT)
-        for i in range(5):
-            self.connection.send(b'*')
-            self.connection.send(ESC + CURSOR_DOWN)
-        for i in range(10):
-            self.connection.send(b'*')
-            self.connection.send(ESC + CURSOR_LEFT)
-        for i in range(5):
-            self.connection.send(b'*')
-            self.connection.send(ESC + CURSOR_UP)
-        
-        time.sleep(1)
-
-    def demo_graphics_mode(self) -> None:
-        """Demonstrate graphics mode by drawing a box with title and line graph"""
-        print("Demonstrating graphics mode...")
-        
-        self.connection.send(ESC + CURSOR_HOME)
-        self.connection.send(ESC + ERASE_SCREEN)
-        self.connection.send(ESC + CURSOR_HOME)
-
-        # Box drawing characters in VT52 graphics mode
-        TOP_LEFT = b'l'     # ┌
-        TOP_RIGHT = b'k'    # ┐
-        BOTTOM_LEFT = b'm'  # └
-        BOTTOM_RIGHT = b'j' # ┘
-        HORIZONTAL = b'q'   # ─
-        VERTICAL = b'x'     # │
-        
-        # Enter graphics mode
-        self.connection.send(ESC + ENTER_GRAPHICS)
-        
-        # Draw box (30 wide x 15 high, starting at position 10,5)
-        self.position_cursor(5, 10)
-        
-        # Top border
-        self.connection.send(TOP_LEFT)
-        self.connection.send(HORIZONTAL * 28)
-        self.connection.send(TOP_RIGHT)
-        
-        # Sides
-        for i in range(13):
-            self.position_cursor(6 + i, 10)
-            self.connection.send(VERTICAL)
-            self.position_cursor(6 + i, 39)
-            self.connection.send(VERTICAL)
-        
-        # Bottom border
-        self.position_cursor(19, 10)
-        self.connection.send(BOTTOM_LEFT)
-        self.connection.send(HORIZONTAL * 28)
-        self.connection.send(BOTTOM_RIGHT)
-        
-        # Exit graphics mode to write title
-        self.connection.send(ESC + EXIT_GRAPHICS)
-        self.position_cursor(4, 20)
-        self.connection.send(b"SAMPLE GRAPH")
-        
-        # Draw Y axis labels
-        self.position_cursor(7, 7)
-        self.connection.send(b"100")
-        self.position_cursor(13, 7)
-        self.connection.send(b" 50")
-        self.position_cursor(18, 7)
-        self.connection.send(b"  0")
-        
-        # Draw X axis labels
-        self.position_cursor(20, 15)
-        self.connection.send(b"0")
-        self.position_cursor(20, 25)
-        self.connection.send(b"50")
-        self.position_cursor(20, 35)
-        self.connection.send(b"100")
-        
-        # Draw a sample line graph
-        points = [
-            (12,8), (15,9), (18,12), (21,10), (24,13),
-            (27,11), (30,14), (33,12), (36,15)
-        ]
-        
-        self.connection.send(ESC + ENTER_GRAPHICS)
-        
-        for x, y in points:
-            self.position_cursor(y, x)
-            self.connection.send(b'a')
-            
-        self.connection.send(ESC + EXIT_GRAPHICS)
-        
-        time.sleep(5)
-
-    def demo_screen_clear(self) -> None:
-        """Demonstrate screen clearing functions"""
-        print("Demonstrating screen clearing...")
-
-        self.connection.send(ESC + CURSOR_HOME)
-        self.connection.send(ESC + ERASE_SCREEN)
-        self.connection.send(ESC + CURSOR_HOME)
-        
-        # Fill screen with numbers
-        for row in range(1, 24):
-            self.position_cursor(row, 1)
-            for col in range(1, 81):
-                self.connection.send(f"{col % 10}".encode())
-        
-        time.sleep(2)
-        
-        # Clear lines one by one
-        for row in range(1, 24):
-            self.position_cursor(row, 1)
-            self.connection.send(ESC + ERASE_TO_EOL)
             time.sleep(0.1)
         
-        time.sleep(1)
+        # Right side
+        for _ in range(5):
+            self.connection.send(ESC + CURSOR_DOWN)
+            time.sleep(0.1)
+            self.connection.send(ESC + CURSOR_LEFT)
+            self.connection.send(b'*')
         
-        # Fill again
-        for row in range(1, 24):
-            self.position_cursor(row, 1)
-            for col in range(1, 81):
-                self.connection.send(f"{col % 10}".encode())
+        # Bottom line
+        for _ in range(10):
+            self.connection.send(ESC + CURSOR_LEFT)
+            time.sleep(0.1)
+            self.connection.send(ESC + CURSOR_LEFT)
+            self.connection.send(b'*')
+        
+        # Left side
+        for _ in range(5):
+            self.connection.send(ESC + CURSOR_UP)
+            time.sleep(0.1)
+            self.connection.send(ESC + CURSOR_LEFT)
+            self.connection.send(b'*')
         
         time.sleep(2)
-        self.connection.send(ESC + CURSOR_HOME)
-        self.connection.send(ESC + ERASE_SCREEN)
-        self.connection.send(ESC + CURSOR_HOME)
-
-    def demo_scrolling(self) -> None:
-        """Demonstrate terminal scrolling"""
-        print("Demonstrating scrolling...")
-        
-        self.connection.send(ESC + CURSOR_HOME)
-        self.connection.send(ESC + ERASE_SCREEN)
-        self.connection.send(ESC + CURSOR_HOME)
-
-        # Fill screen
-        for i in range(1, 30):
-#            self.connection.send(f"This is line {i} of scrolling text test\r\n".encode())
-            self.connection.send(f"\n".encode())
-            time.sleep(0.2)
-        
-        time.sleep(3)
-
-        self.connection.send(ESC + CURSOR_HOME)
-        self.connection.send(ESC + ERASE_SCREEN)
-        self.connection.send(ESC + CURSOR_HOME)
-
-        # Demonstrate reverse linefeed
-        self.position_cursor(12, 1)
-        for i in range(5):
-            self.connection.send(ESC + REVERSE_LINEFEED)
-            self.connection.send(b"*** Reverse linefeed line ***\r\n")
-            time.sleep(0.5)
-
-        time.sleep(3)
-
-        self.connection.send(ESC + CURSOR_HOME)
-        self.connection.send(ESC + ERASE_SCREEN)
-        self.connection.send(ESC + CURSOR_HOME)
-
 
     def run_demo(self) -> None:
-        """Run through all demos"""
+        """Run all implemented tests"""
         try:
-            self.connection.send('A'.encode())
-
-
-            # Clear screen and home cursor
-            self.connection.send(ESC + CURSOR_HOME)
-            self.connection.send(ESC + ERASE_SCREEN)
-            self.connection.send(ESC + CURSOR_HOME)
-            
-            # Welcome message
             welcome = """
-            **** VT52 Terminal Demonstration ****
+            **** VT52 Terminal Test Suite ****
             
-            This program will demonstrate various
-            VT52 terminal features including:
-            - Cursor positioning
-            - Graphics mode
-            - Screen clearing
-            - Scrolling
+            Testing implemented features:
+            - Control characters (BS, LF, CR, TAB)
+            - Cursor positioning (abs/rel)
+            - Erase functions (EOL/screen)
+            - Hardware scroll behavior
+            - Box drawing
             
             Starting in 3 seconds...
             """
+            
+            self.connection.send(ESC + CURSOR_HOME)
+            self.connection.send(ESC + ERASE_SCREEN)
+            time.sleep(0.5)
             
             for line in welcome.split('\n'):
                 self.connection.send(line.encode() + b'\r\n')
             
             time.sleep(3)
             
-            self.demo_scrolling()
+            # Run tests with proper delays
+            self.test_control_chars()
+            self.position_cursor(22, 1)
+            self.connection.send(b'\r3 seconds to continue...')
             time.sleep(3)
-
+            
+            self.test_cursor_positioning()
+            self.position_cursor(22, 1)
+            self.connection.send(b'\r3 seconds to continue...')
+            time.sleep(3)
+            
+            self.test_erase_functions()
+            self.position_cursor(22, 1)
+            self.connection.send(b'\r3 seconds to continue...')
+            time.sleep(3)
+            
+            self.test_scroll_behavior()
+            self.position_cursor(22, 1)
+            self.connection.send(b'\r3 seconds to continue...')
+            time.sleep(3)
+            
             self.demo_cursor_movement()
-            time.sleep(1)
-            
-            self.demo_graphics_mode()
-            time.sleep(1)
-            
-            self.demo_screen_clear()
-            time.sleep(1)
+            self.position_cursor(22, 1)
+            self.connection.send(b'\r3 seconds to continue...')
+            time.sleep(3)
             
             # Final message
-            self.position_cursor(23, 1)
-            self.connection.send(b"Demo complete! Connection will close in 5 seconds.")
+            self.connection.send(ESC + CURSOR_HOME)
+            self.connection.send(ESC + ERASE_SCREEN)
+            time.sleep(0.5)
+            
+            self.position_cursor(1, 1)
+            summary = """
+            Test Summary:
+            - Control Characters
+            - Cursor Positioning
+            - Erase Functions
+            - Hardware Scroll Operations
+            - Box Drawing
+            
+            Tests complete! Connection will close in 5 seconds.
+            """
+            for line in summary.split('\n'):
+                self.connection.send(line.encode() + b'\r\n')
+            
             time.sleep(5)
             
         except ConnectionError as e:
             print(f"Connection error: {e}")
         except Exception as e:
-            print(f"Error during demo: {e}")
+            print(f"Error during tests: {e}")
         finally:
             self.connection.close()
 
@@ -340,7 +403,7 @@ def run_telnet_server(host: str, port: int) -> None:
         print("Server stopped")
 
 def main():
-    parser = argparse.ArgumentParser(description='VT52 Terminal Demo')
+    parser = argparse.ArgumentParser(description='VT52 Terminal Test Suite')
     parser.add_argument('--mode', choices=['serial', 'telnet'], default='serial',
                       help='Connection mode (default: serial)')
     parser.add_argument('--port', default='COM9',
@@ -353,7 +416,7 @@ def main():
     args = parser.parse_args()
     
     if args.mode == 'serial':
-        print(f"Starting VT52 demo on serial port {args.port} at {args.baudrate} baud")
+        print(f"Starting VT52 test suite on serial port {args.port} at {args.baudrate} baud")
         run_serial_demo(args.port, args.baudrate)
     else:
         try:

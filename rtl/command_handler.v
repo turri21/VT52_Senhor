@@ -1,442 +1,394 @@
+/* ================================================================
+ * VT52
+ *
+ * Copyright (C) 2024 Fred Van Eijk
+ *
+ * Permission is hereby granted, free of charge, to any person 
+ * obtaining a copy of this software and associated documentation 
+ * files (the "Software"), to deal in the Software without 
+ * restriction, including without limitation the rights to use, 
+ * copy, modify, merge, publish, distribute, sublicense, and/or 
+ * sell copies of the Software, and to permit persons to whom 
+ * the Software is furnished to do so, subject to the following 
+ * conditions:
+ * 
+ * The above copyright notice and this permission notice shall be 
+ * included in all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES 
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND 
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT 
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR 
+ * OTHER DEALINGS IN THE SOFTWARE.
+ * ================================================================
+ */
 
-/*
-
-The command_handler module is a complex Verilog module designed to handle 
-terminal-like commands and manage a text display. Here's a breakdown of 
-its key features and functionality:
-
-1. Module Parameters:
-   - ROWS, COLS: Define the display dimensions (24 rows, 80 columns by default).
-   - LAST_ROW, ONE_PAST_LAST_ROW: Calculated based on ROWS and COLS.
-   - ROW_BITS, COL_BITS, ADDR_BITS: Bit widths for addressing rows, columns, and memory.
-
-2. Inputs and Outputs:
-   - Inputs: clk, reset, data (8-bit), valid
-   - Outputs: ready, new_first_char, new_first_char_wen, new_char, new_char_address, new_char_wen, new_cursor_x, new_cursor_y, new_cursor_wen
-
-3. State Machine:
-   The module uses a one-hot encoded state machine with the following states:
-   - state_char: Normal character processing
-   - state_esc: Escape sequence processing
-   - state_row, state_col, state_addr, state_cursor: Handling cursor movement commands
-   - state_erase: Erasing characters on the display
-
-4. Character Processing:
-   - Handles printable characters (ASCII 32-126, excluding 127)
-   - Manages cursor movement within the display bounds
-   - Implements backspace, tab, linefeed, and carriage return functionality
-
-5. Escape Sequence Handling:
-   Processes VT52-like escape sequences for:
-   - Cursor movement (up, down, left, right, home)
-   - Advanced cursor positioning (Esc-Y sequence)
-   - Screen and line erasure
-
-6. Display Management:
-   - Implements a circular buffer for the display, allowing scrolling
-   - Manages the first character position (new_first_char) for scrolling
-   - Handles line wrapping and scrolling when reaching display boundaries
-
-7. Memory Interaction:
-   - Generates write enables and addresses for updating characters in memory
-   - Manages cursor position updates
-
-8. Special Features:
-   - Implements a tab-stop system (every 8 columns)
-   - Handles scrolling by updating the first character position and erasing the new line
-
-9. Error Handling:
-   - Gracefully handles out-of-bounds cursor movements
-   - Ignores unrecognized escape sequences
-
-This module appears to be designed for a terminal emulator or similar text-based 
-display system, possibly for a retro-computing project or a specialized interface. 
-It handles a subset of VT52-like terminal commands, managing both text input and 
-cursor control in a memory-mapped display buffer.
-
-The design uses a state machine to process incoming characters and commands, 
-updating the display and cursor position accordingly. It's optimized for a 
-fixed-size display but includes logic to handle wraparound and scrolling, 
-making it suitable for continuous text input and display.
-*/
-
-
-// TODO define constants for the control chars
 module command_handler
-  #(parameter ROWS = 24,
-    parameter COLS = 80,
-    parameter LAST_ROW = (ROWS-1) * COLS,
-    parameter ONE_PAST_LAST_ROW = ROWS * COLS,
-    parameter ROW_BITS = 5,
-    parameter COL_BITS = 7,
-    parameter ADDR_BITS = 11)
-   (
-    input clk,
-    input reset,
-    input [7:0] data,
-    input valid,
-    output ready,
-    output [ADDR_BITS-1:0] new_first_char,
-    output new_first_char_wen,
-    output [7:0] new_char,
-    output [ADDR_BITS-1:0] new_char_address,
-    output new_char_wen,
-    output [COL_BITS-1:0] new_cursor_x,
-    output [ROW_BITS-1:0] new_cursor_y,
-    output new_cursor_wen
-    );
+#(parameter ROWS = 24,           // Visible rows
+  parameter COLS = 80,
+  parameter ROW_BITS = 5,
+  parameter COL_BITS = 7,
+  parameter ADDR_BITS = 11)
+ (
+  input wire clk,
+  input wire reset,
+  input wire [7:0] data,
+  input wire valid,
+  input wire from_uart,    
+  output reg ready,
+  output reg buffer_scroll,        
+  input wire scroll_busy,          
+  input wire scroll_done,          
+  output reg [7:0] buffer_write_char,
+  output reg [ADDR_BITS-1:0] buffer_write_addr,
+  output reg buffer_write_enable,
+  output reg [COL_BITS-1:0] new_cursor_x,
+  output reg [ROW_BITS-1:0] new_cursor_y,
+  output reg new_cursor_wen
+  );
 
-   // XXX maybe ready should be registered? reg ready_q;
-   reg [7:0] new_char_q;
-   reg [ADDR_BITS-1:0] new_char_address_q;
-   reg new_char_wen_q;
-   reg [COL_BITS-1:0] new_cursor_x_q;
-   reg [ROW_BITS-1:0] new_cursor_y_q;
-   reg new_cursor_wen_q;
-   reg [ADDR_BITS-1:0] new_first_char_q;
-   reg new_first_char_wen_q;
+  reg [ROW_BITS-1:0] new_row;
+  reg [COL_BITS-1:0] new_col;
+  reg [ADDR_BITS-1:0] current_row_addr;
+  reg [ADDR_BITS-1:0] current_char_addr;
+  reg [ADDR_BITS-1:0] erase_address;
+  reg [ADDR_BITS-1:0] last_char_to_erase;
+  reg [31:0] timeout_counter;
+  reg state_timeout;
 
-   reg [ROW_BITS-1:0] new_row;
-   reg [COL_BITS-1:0] new_col;
-   // This may temporarily hold a value that's twice the size of a regular
-   // address (we adjust it at a later state)
-   // so we DON'T substract 1 from ADDR_BITS
-   reg [ADDR_BITS:0] new_addr;
-   reg [ADDR_BITS-1:0] last_char_to_erase;
+  // State encoding - one-hot
+  localparam state_char        = 8'b00000001;
+  localparam state_esc         = 8'b00000010;
+  localparam state_row         = 8'b00000100;
+  localparam state_col         = 8'b00001000;
+  localparam state_addr        = 8'b00010000;
+  localparam state_cursor      = 8'b00100000;
+  localparam state_erase       = 8'b01000000;
+  localparam state_scroll_wait = 8'b10000000;
 
-   reg [ADDR_BITS-1:0] current_row_addr;
-   reg [ADDR_BITS-1:0] current_char_addr;
+  reg [7:0] state;
 
-   // state: one hot encoding
-   // char is the normal state
-   // row, col, addr & cursor form a pipeline for Esc-Y
-   // no input accepted on addr & cursor
-   // erase is for the erase loop, no input is accepted on this state
-   localparam state_char   = 8'b00000001;
-   localparam state_esc    = 8'b00000010;
-   localparam state_row    = 8'b00000100;
-   localparam state_col    = 8'b00001000;
-   localparam state_addr   = 8'b00010000;
-   localparam state_cursor = 8'b00100000;
-   localparam state_erase  = 8'b01000000;
+  // At 25MHz clock:
+  // 1 second = 25,000,000 cycles
+  localparam UART_TIMEOUT    = 32'd25_000_000;    // 1 second
+  localparam KEYBOARD_TIMEOUT = 32'd125_000_000;  // 5 seconds
 
-   reg [7:0] state;
-
-   // if we are erasing part of the screen or moving the cursor
-   // we can't receive new commands
-   assign ready = (state & (state_erase | state_cursor | state_addr)) == 0;
-   assign new_char = new_char_q;
-   assign new_char_address = new_char_address_q;
-   assign new_char_wen = new_char_wen_q;
-   assign new_cursor_x = new_cursor_x_q;
-   assign new_cursor_y = new_cursor_y_q;
-   assign new_cursor_wen = new_cursor_wen_q;
-   assign new_first_char = new_first_char_q;
-   assign new_first_char_wen = new_first_char_wen_q;
-
-   always @(posedge clk) begin
-      if (reset) begin
-         new_char_q <= 0;
-         new_char_address_q <= 0;
-         new_char_wen_q <= 0;
-
-         new_cursor_x_q <= 0;
-         new_cursor_y_q <= 0;
-         new_cursor_wen_q <= 0;
-
-         current_row_addr <= 0;
-         current_char_addr <= 0;
-
-         new_first_char_q <= 0;
-         new_first_char_wen_q <= 0;
-
-         state <= state_char;
-         new_row <= 0;
-         new_col <= 0;
-         new_addr <= 0;
-         last_char_to_erase <= 0;
+  // Timeout counter
+  always @(posedge clk) begin
+    if (reset) begin
+      timeout_counter <= 0;
+      state_timeout <= 0;
+    end
+    else begin
+      if (valid) begin  
+        timeout_counter <= 0;
+        state_timeout <= 0;
+      end
+      else if (state == state_esc || state == state_row || state == state_col) begin
+        if (from_uart) begin
+          if (timeout_counter >= UART_TIMEOUT) begin
+            state_timeout <= 1;
+          end
+          else begin
+            timeout_counter <= timeout_counter + 1;
+          end
+        end
+        else begin
+          if (timeout_counter >= KEYBOARD_TIMEOUT) begin
+            state_timeout <= 1;
+          end
+          else begin
+            timeout_counter <= timeout_counter + 1;
+          end
+        end
       end
       else begin
-         // after one clock cycle we should turn these off
-         if (new_char_wen_q) new_char_wen_q <= 0;
-         if (new_cursor_wen_q) new_cursor_wen_q <= 0;
-         if (new_first_char_wen_q) new_first_char_wen_q <= 0;
-         // first the states that consume input
-         if (ready && valid) begin
-            case (state)
-              state_char: begin
-                 // new char arrived
-                 if (data >= 8'h20 && data != 8'h7f) begin
-                    // printable char, easy
-                    new_char_q <= data;
-                    new_char_address_q <= current_char_addr;
-                    new_char_wen_q <= 1;
-                    // no auto linefeed
-                    if (new_cursor_x_q != (COLS-1)) begin
-                       new_cursor_x_q <= new_cursor_x_q + 1;
-                       current_char_addr <= current_char_addr + 1;
-                       new_cursor_wen_q <= 1;
-                    end
-                 end
-                 else begin
-                    case (data)
-                      // backspace
-                      8'h08: begin
-                         if (new_cursor_x_q != 0) begin
-                            new_cursor_x_q <= new_cursor_x_q - 1;
-                            current_char_addr <= current_char_addr - 1;
-                            new_cursor_wen_q <= 1;
-                         end
-                      end
-                      // tab
-                      8'h09: begin
-                         // go until the last tab stop by 8 spaces, then 1 by 1
-                         if (new_cursor_x_q < (COLS-9)) begin
-                            new_cursor_x_q <= {(new_cursor_x_q[COL_BITS-1:3]+1), 3'b000};
-                            current_char_addr <= {(current_char_addr[ADDR_BITS-1:3]+1), 3'b000};
-                            new_cursor_wen_q <= 1;
-                         end
-                         else if (new_cursor_x_q != (COLS-1)) begin
-                            new_cursor_x_q <= new_cursor_x_q + 1;
-                            current_char_addr <= current_char_addr + 1;
-                            new_cursor_wen_q <= 1;
-                         end
-                      end // case: 8'h09
-                      // linefeed
-                      8'h0a: begin
-                         if (new_cursor_y_q == (ROWS-1)) begin
-                            new_first_char_q <= new_first_char_q == LAST_ROW?
-                                                0 : new_first_char_q + COLS;
+        timeout_counter <= 0;
+        state_timeout <= 0;
+      end
+    end
+  end
 
-                            if (current_row_addr == LAST_ROW) begin
-                               current_row_addr <= 0;
-                               current_char_addr <= new_cursor_x_q;
-                            end
-                            else begin
-                               current_row_addr <= current_row_addr + COLS;
-                               current_char_addr <= current_char_addr + COLS;
-                            end
-                            new_first_char_wen_q <= 1;
-                            // characters to erase last line
-                            new_char_q <= " ";
-                            new_char_address_q <= new_first_char_q;
-                            new_char_wen_q <= 1;
-                            last_char_to_erase <= new_first_char_q + (COLS-1);
-                            state <= state_erase;
-                         end
-                         else begin
-                            new_cursor_y_q <= new_cursor_y_q + 1;
-                            new_cursor_wen_q <= 1;
-                            if (current_row_addr == LAST_ROW) begin
-                               current_row_addr <= 0;
-                               current_char_addr <= new_cursor_x_q;
-                            end
-                            else begin
-                               current_row_addr <= current_row_addr + COLS;
-                               current_char_addr <= current_char_addr + COLS;
-                            end
-                         end
-                      end
-                      // carriage return
-                      8'h0d: begin
-                         if (new_cursor_x != 0) begin
-                            new_cursor_x_q <= 0;
-                            new_cursor_wen_q <= 1;
-                            current_char_addr <= current_row_addr;
-                         end
-                      end
-                      // escape
-                      8'h1b: begin
-                         state <= state_esc;
-                      end
-                    endcase // case (data)
-                 end // else: !if(data >= 8'h20 && data <= 8'h7e)
-              end // case: state_char
-              state_esc: begin
-                 case (data)
-                   // Basic cursor movement
-                   // Esc-only, so no BS, LF & SPACE (covered before)
-                   "B": begin
-                      if (new_cursor_y_q != (ROWS-1)) begin
-                         new_cursor_y_q <= new_cursor_y_q + 1;
-                         new_cursor_wen_q <= 1;
-                         if (current_row_addr == LAST_ROW) begin
-                            current_row_addr <= 0;
-                            current_char_addr <= new_cursor_x_q;
-                         end
-                         else begin
-                            current_row_addr <= current_row_addr + COLS;
-                            current_char_addr <= current_char_addr + COLS;
-                         end
-                      end
-                      state <= state_char;
-                   end
-                   "I": begin
-                      if (new_cursor_y_q == 0) begin
-                         if (new_first_char_q == 0) begin
-                            new_first_char_q <= LAST_ROW;
-                            current_row_addr <= LAST_ROW;
-                            current_char_addr <= LAST_ROW + new_cursor_x_q;
-                            // characters to erase (whole line)
-                            new_char_address_q <= LAST_ROW;
-                            last_char_to_erase <= LAST_ROW+(COLS-1);
-                         end
-                         else begin
-                            new_first_char_q <= new_first_char_q - COLS;
-                            current_row_addr <= current_row_addr - COLS;
-                            current_char_addr <= current_char_addr - COLS;
-                            // characters to erase (whole line)
-                            new_char_address_q <= new_first_char_q - COLS;
-                            last_char_to_erase <= new_first_char_q - 1;
-                         end
-                         new_first_char_wen_q <= 1;
-                         // character to erase last line
-                         new_char_q <= " ";
-                         new_char_wen_q <= 1;
-                         state <= state_erase;
-                      end
-                      else begin
-                         new_cursor_y_q <= new_cursor_y_q - 1;
-                         new_cursor_wen_q <= 1;
-                         if (current_row_addr == 0) begin
-                            current_row_addr <= LAST_ROW;
-                            current_char_addr <= LAST_ROW + new_cursor_x_q;
-                         end
-                         else begin
-                            current_row_addr <= current_row_addr - COLS;
-                            current_char_addr <= current_char_addr - COLS;
-                         end
-                         state <= state_char;
-                      end
-                   end
-                   "A": begin
-                      if (new_cursor_y_q != 0) begin
-                         new_cursor_y_q <= new_cursor_y_q - 1;
-                         new_cursor_wen_q <= 1;
-                         if (current_row_addr == 0) begin
-                            current_row_addr <= LAST_ROW;
-                            current_char_addr <= LAST_ROW + new_cursor_x_q;
-                         end
-                         else begin
-                            current_row_addr <= current_row_addr - COLS;
-                            current_char_addr <= current_char_addr - COLS;
-                         end
-                      end
-                      state <= state_char;
-                   end
-                   "C": begin
-                      if (new_cursor_x_q != (COLS-1)) begin
-                         new_cursor_x_q <= new_cursor_x_q + 1;
-                         new_cursor_wen_q <= 1;
-                         current_char_addr <= current_char_addr+1;
-                      end
-                      state <= state_char;
-                   end
-                   "D": begin
-                      if (new_cursor_x_q != 0) begin
-                         new_cursor_x_q <= new_cursor_x_q - 1;
-                         new_cursor_wen_q <= 1;
-                         current_char_addr <= current_char_addr-1;
-                      end
-                      state <= state_char;
-                   end
-                   // Advanced cursor movement
-                   // Esc-only, so no CR & TAB (covered before)
-                   "H": begin
-                      new_cursor_x_q <= 0;
-                      new_cursor_y_q <= 0;
-                      new_cursor_wen_q <= 1;
-                      current_row_addr <= new_first_char_q;
-                      current_char_addr <= new_first_char_q;
-                      state <= state_char;
-                   end
-                   "Y": begin
-                      // "Y" received, expecting row & col
-                      state <= state_row;
-                   end
-                   // Screen erasure
-                   "K": begin
-                      // erase to end of line
-                      new_char_q <= " ";
-                      new_char_address_q <= current_char_addr;
-                      new_char_wen_q <= 1;
-                      last_char_to_erase <= current_row_addr + (COLS-1);
-                      state <= state_erase;
-                   end
-                   "J": begin
-                      // erase to end of screen
-                      new_char_q <= " ";
-                      new_char_address_q <= current_char_addr;
-                      new_char_wen_q <= 1;
-                      last_char_to_erase <= new_first_char_q == 0?
-                                            LAST_ROW+(COLS-1): new_first_char_q-1;
-                      state <= state_erase;
-                   end
-                   // escape
-                   8'h1b: begin
-                      // on VT52 two escapes don't cancel each other
-                      // do nothing
-                   end
-                   default: begin
-                      // unrecognized escape sequence, back to normal
-                      state <= state_char;
-                   end
-                 endcase // case (data)
-              end // case: state_esc
-              state_row: begin
-                 // row received, now we need col
-                 new_row <= (data >= 8'h20 && data < (8'h20 + ROWS))?
-                            data - 8'h20 : new_cursor_y;
-                 state <= state_col;
-              end
-              state_col: begin
-                 // row & col received, now we need to calculate the new row address
-                 // XXX I'm not sure what happens if data < 8'h20, this is a guess
-                 new_col <= (data >= 8'h20 && data < (8'h20 + COLS))?
-                            data - 8'h20 : (COLS-1);
-                 // this may need substracting if it's more than LAST_ROW
-                 // but we'll do it in the next state
-                 // new_addr has an extra bit to avoid overflows
-                 new_addr <= new_row * 80 + new_first_char_q;
-                 state <= state_addr;
-              end
-              // states erase, addr & cursor aren't here as they don't consume input
-            endcase // case (state)
-         end // if (ready && valid)
-         // now we can handle the states that don't consume input
-         else begin
-            case (state)
-              state_erase: begin
-                 if (new_char_address_q == last_char_to_erase) begin
-                    // all chars erased, resume normal operation
-                    state <= state_char;
-                 end
-                 else begin
-                    // keep erasing, but be careful if reaching the end of the buffer
-                    new_char_address_q = new_char_address_q == LAST_ROW + (COLS+1)?
-                                         0 : new_char_address_q + 1;
-                    new_char_wen_q <= 1;
-                 end
-              end
-              state_addr: begin
-                 // after possibly adjusting the address we are ready to
-                 // move the cursor
-                 new_addr <= new_addr > LAST_ROW? new_addr - ONE_PAST_LAST_ROW : new_addr;
-                 state <= state_cursor;
-              end
-              state_cursor: begin
-                 // move cursor and go back to idle
-                 new_cursor_x_q <= new_col;
-                 new_cursor_y_q <= new_row;
-                 new_cursor_wen_q <= 1;
-                 // once adjusted, we can ignore the higher bit
-                 current_row_addr <= new_addr[ADDR_BITS-1:0];
-                 current_char_addr <= new_addr + new_col;
+  // Ready signal generation
+  wire in_multistate_operation = (state & (state_erase | state_cursor | state_addr | state_scroll_wait)) != 0;
+  
+  // Ready signal management
+  always @(posedge clk) begin
+    if (reset) begin
+      ready <= 1'b1;
+    end
+    else begin
+      ready <= 1'b1;  // Default to ready
+      
+      if (scroll_busy) begin
+        ready <= 1'b0;
+      end
+      else if (valid && ready) begin  // Only drop ready for one cycle when accepting data
+        ready <= 1'b0;
+      end
+      else if (in_multistate_operation && state != state_char) begin
+        ready <= 1'b0;
+      end
+    end
+  end
 
-                 state <= state_char;
-              end // if (state == state_col)
-            endcase // case (state)
-         end // else: !if(ready && valid)
-      end // else: !if(reset)
-   end // always @ (posedge clk)
+  // Main state machine
+  always @(posedge clk) begin
+    if (reset) begin
+      buffer_write_char <= 0;
+      buffer_write_addr <= 0;
+      buffer_write_enable <= 0;
+      buffer_scroll <= 0;
+      new_cursor_x <= 0;
+      new_cursor_y <= 0;
+      new_cursor_wen <= 0;
+      current_row_addr <= 0;
+      current_char_addr <= 0;
+      state <= state_char;
+      new_row <= 0;
+      new_col <= 0;
+      erase_address <= 0;
+      last_char_to_erase <= 0;
+    end
+    else begin
+      // Clear one-cycle signals
+      buffer_write_enable <= 0;
+      new_cursor_wen <= 0;
+      buffer_scroll <= 0;
+
+      case (state)
+        state_scroll_wait: begin
+          if (scroll_done || !scroll_busy) begin
+            current_row_addr <= (ROWS-1) * COLS;
+            current_char_addr <= (ROWS-1) * COLS + new_cursor_x;
+            state <= state_char;
+          end
+        end
+
+        state_erase: begin
+          if (!scroll_busy) begin
+            if (erase_address > last_char_to_erase) begin
+              state <= state_char;
+            end
+            else begin
+              buffer_write_char <= 8'h20;
+              buffer_write_addr <= erase_address;
+              erase_address <= erase_address + 1;
+              buffer_write_enable <= 1;
+            end
+          end
+        end
+
+        state_char: begin
+          if (ready && valid && !scroll_busy) begin
+            if (data >= 8'h20 && data != 8'h7f) begin
+              // Write the character
+              buffer_write_char <= data;
+              buffer_write_addr <= current_char_addr;
+              buffer_write_enable <= 1;
+
+              // Standard VT52 cursor advance
+              if (new_cursor_x == (COLS-1)) begin
+                // At end of line
+                if (new_cursor_y == (ROWS-1)) begin
+                  buffer_scroll <= 1;
+                  state <= state_scroll_wait;
+                end
+                else begin
+                  new_cursor_y <= new_cursor_y + 1;
+                  new_cursor_x <= 0;
+                  new_cursor_wen <= 1;
+                  current_row_addr <= current_row_addr + COLS;
+                  current_char_addr <= current_row_addr + COLS;
+                end
+              end
+              else begin
+                new_cursor_x <= new_cursor_x + 1;
+                current_char_addr <= current_char_addr + 1;
+                new_cursor_wen <= 1;
+              end
+            end
+            else begin
+              case (data)
+                8'h08: begin  // BS - Move cursor left (no erase)
+                  if (new_cursor_x != 0) begin
+                    new_cursor_x <= new_cursor_x - 1;
+                    current_char_addr <= current_char_addr - 1;
+                    new_cursor_wen <= 1;
+                  end
+                end
+
+                8'h09: begin  // HT - Tab (every 8 columns)
+                  if (new_cursor_x < (COLS-9)) begin
+                    new_cursor_x <= {(new_cursor_x[COL_BITS-1:3]+1), 3'b000};
+                    current_char_addr <= {(current_char_addr[ADDR_BITS-1:3]+1), 3'b000};
+                    new_cursor_wen <= 1;
+                  end
+                  else if (new_cursor_x != (COLS-1)) begin
+                    new_cursor_x <= new_cursor_x + 1;
+                    current_char_addr <= current_char_addr + 1;
+                    new_cursor_wen <= 1;
+                  end
+                end
+
+                8'h0a: begin  // LF - Line feed
+                  if (new_cursor_y == (ROWS-1)) begin
+                    buffer_scroll <= 1;
+                    state <= state_scroll_wait;
+                  end
+                  else begin
+                    new_cursor_y <= new_cursor_y + 1;
+                    new_cursor_wen <= 1;
+                    current_row_addr <= current_row_addr + COLS;
+                    current_char_addr <= current_char_addr + COLS;
+                  end
+                end
+
+                8'h0d: begin  // CR - Return to start of line
+                  new_cursor_x <= 0;
+                  new_cursor_wen <= 1;
+                  current_char_addr <= current_row_addr;
+                end
+
+                8'h1b: begin  // ESC - Start escape sequence
+                  state <= state_esc;
+                end
+              endcase
+            end
+          end
+        end
+
+        state_esc: begin
+          if (valid && !scroll_busy) begin
+            case (data)
+              "A": begin  // Cursor up
+                if (new_cursor_y != 0) begin
+                  new_cursor_y <= new_cursor_y - 1;
+                  new_cursor_wen <= 1;
+                  current_row_addr <= current_row_addr - COLS;
+                  current_char_addr <= current_char_addr - COLS;
+                end
+                state <= state_char;
+              end
+
+              "B": begin  // Cursor down
+                if (new_cursor_y != (ROWS-1)) begin
+                  new_cursor_y <= new_cursor_y + 1;
+                  new_cursor_wen <= 1;
+                  current_row_addr <= current_row_addr + COLS;
+                  current_char_addr <= current_char_addr + COLS;
+                end
+                state <= state_char;
+              end
+
+              "C": begin  // Cursor right
+                if (new_cursor_x != (COLS-1)) begin
+                  new_cursor_x <= new_cursor_x + 1;
+                  new_cursor_wen <= 1;
+                  current_char_addr <= current_char_addr + 1;
+                end
+                state <= state_char;
+              end
+
+              "D": begin  // Cursor left
+                if (new_cursor_x != 0) begin
+                  new_cursor_x <= new_cursor_x - 1;
+                  new_cursor_wen <= 1;
+                  current_char_addr <= current_char_addr - 1;
+                end
+                state <= state_char;
+              end
+
+              "H": begin  // Cursor home
+                new_cursor_x <= 0;
+                new_cursor_y <= 0;
+                new_cursor_wen <= 1;
+                current_row_addr <= 0;
+                current_char_addr <= 0;
+                state <= state_char;
+              end
+
+              "I": begin  // Reverse line feed
+                if (new_cursor_y == 0) begin
+                  buffer_scroll <= 1;
+                  state <= state_scroll_wait;
+                end
+                else begin
+                  new_cursor_y <= new_cursor_y - 1;
+                  new_cursor_wen <= 1;
+                  current_row_addr <= current_row_addr - COLS;
+                  current_char_addr <= current_char_addr - COLS;
+                  state <= state_char;
+                end
+              end
+
+              "J": begin  // Erase to end of screen and home cursor
+                buffer_write_char <= 8'h20;
+                erase_address <= 0;
+                last_char_to_erase <= (ROWS * COLS) - 1;
+                buffer_write_enable <= 1;
+                // Also move cursor home per VT52 spec
+                new_cursor_x <= 0;
+                new_cursor_y <= 0;
+                new_cursor_wen <= 1;
+                current_row_addr <= 0;
+                current_char_addr <= 0;
+                state <= state_erase;
+              end
+
+              "K": begin  // Erase to end of line (cursor doesn't move)
+                buffer_write_char <= 8'h20;
+                erase_address <= current_char_addr;
+                last_char_to_erase <= current_row_addr + (COLS-1);
+                buffer_write_enable <= 1;
+                state <= state_erase;
+              end
+
+              "Y": begin  // Direct cursor address
+                state <= state_row;
+              end
+
+              default: begin
+                state <= state_char;  // Ignore unknown escape sequences
+              end
+            endcase
+          end
+          
+          if (state_timeout) begin
+            state <= state_char;
+          end
+        end
+
+        state_row: begin
+          if (valid) begin
+            new_row <= (data >= 8'h20 && data < (8'h20 + ROWS)) ?
+                      data - 8'h20 : new_cursor_y;
+            state <= state_col;
+          end
+        end
+
+        state_col: begin
+          if (valid) begin
+            new_col <= (data >= 8'h20 && data < (8'h20 + COLS)) ?
+                      data - 8'h20 : new_cursor_x;
+            state <= state_cursor;
+          end
+        end
+
+        state_cursor: begin
+          new_cursor_x <= new_col;
+          new_cursor_y <= new_row;
+          new_cursor_wen <= 1;
+          current_row_addr <= new_row * COLS;
+          current_char_addr <= (new_row * COLS) + new_col;
+          state <= state_char;
+        end
+
+      endcase
+    end
+  end
+
 endmodule

@@ -1,73 +1,116 @@
-/**
-Certainly. I'll provide a detailed description of the char_buffer module.
-
-
-
-The char_buffer module is a simple, dual-port memory implementation in Verilog, likely used to 
-store character data for a display or text buffer. Here's a breakdown of its key features:
-
-1. Module Parameters:
-   - BUF_SIZE: The size of the buffer, default is 1920 (which could represent a 80x24 character display).
-   - ADDR_BITS: The number of bits needed to address the buffer, default is 11 (2^11 = 2048, which is enough to address 1920 locations).
-
-2. Inputs and Outputs:
-   - clk: Clock input
-   - din: 8-bit data input for writing
-   - waddr: Write address input
-   - wen: Write enable input
-   - raddr: Read address input
-   - dout: 8-bit data output for reading
-
-3. Memory Declaration:
-   - mem: An array of 8-bit registers, sized according to BUF_SIZE.
-
-4. Initialization:
-   - The module includes an initial block that reads hexadecimal data from a file named "mem/empty.hex" to initialize the memory.
-   - There's a commented-out line suggesting an alternative initialization file "mem/test.hex".
-
-5. Operation:
-   - On each positive edge of the clock:
-     - If the write enable (wen) is active, it writes the input data (din) to the memory at the write address (waddr).
-     - It always reads data from the memory at the read address (raddr) and assigns it to the output (dout).
-
-6. Dual-Port Functionality:
-   - The module allows simultaneous read and write operations, as it has separate read and write addresses.
-
-7. Synchronous Operation:
-   - Both read and write operations are synchronized to the clock edge, making this a synchronous memory.
-
-This char_buffer module is designed to store and retrieve 8-bit character data, likely for a text 
-display system. Its size (1920 characters) suggests it could be used for a standard 80x24 text mode 
-display. The dual-port nature allows for simultaneous reading and writing, which can be useful in 
-display systems where one part of the system is updating the buffer while another is reading from 
-it to refresh the display.
-
-The initialization from a hex file allows for preloading the buffer with specific content, 
-which could be useful for testing or setting an initial display state. The module's simplicity 
-and flexibility make it suitable for integration into larger display or text processing systems. 
-
-*/
+/* ================================================================
+ * VT52
+ *
+ * Copyright (C) 2024 Fred Van Eijk
+ *
+ * Permission is hereby granted, free of charge, to any person 
+ * obtaining a copy of this software and associated documentation 
+ * files (the "Software"), to deal in the Software without 
+ * restriction, including without limitation the rights to use, 
+ * copy, modify, merge, publish, distribute, sublicense, and/or 
+ * sell copies of the Software, and to permit persons to whom 
+ * the Software is furnished to do so, subject to the following 
+ * conditions:
+ * 
+ * The above copyright notice and this permission notice shall be 
+ * included in all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES 
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND 
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT 
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR 
+ * OTHER DEALINGS IN THE SOFTWARE.
+ * ================================================================
+ */
 
 module char_buffer
-  #(parameter BUF_SIZE = 1920,
-    parameter ADDR_BITS = 11)
+  #(parameter ADDR_BITS = 11,
+    parameter COLS = 80,
+    parameter ROWS = 25,
+    parameter INIT_FILE = "mem/empty.hex")
    (input wire clk,
     input wire [7:0] din,
     input wire [ADDR_BITS-1:0] waddr,
     input wire wen,
+    input wire scroll,              
+    input wire vblank,             // vblank input signal
     input wire [ADDR_BITS-1:0] raddr,
-    output reg [7:0] dout
+    output reg [7:0] dout,
+    output reg scroll_busy,         
+    output reg scroll_done,         
+    input wire reset
     );
 
-   reg [7:0] mem [BUF_SIZE-1:0];
+   reg [7:0] mem [(ROWS*COLS)-1:0];
+   reg [ADDR_BITS-1:0] scroll_addr;
+   reg scrolling;
+   reg scroll_pending;             // track pending scroll requests
+	
+   integer i;
 
    initial begin
-      $readmemh("mem/test.hex", mem) ;
-      //$readmemh("mem/empty.hex", mem) ;
+      for (i = 0; i < ROWS*COLS; i = i + 1) begin
+         mem[i] = 8'h20;  // Initialize all to space
+      end
+      $readmemh(INIT_FILE, mem);
    end
 
    always @(posedge clk) begin
-      if (wen) mem[waddr] <= din;
-      dout <= mem[raddr];
+      if (reset) begin
+         for (i = 0; i < ROWS*COLS; i = i + 1) begin
+            mem[i] = 8'h20;  // Initialize all to space
+         end
+         $readmemh(INIT_FILE, mem);
+         scrolling <= 0;
+         scroll_busy <= 0;
+         scroll_done <= 0;
+         scroll_addr <= 0;
+         scroll_pending <= 0;
+      end
+      else begin
+         scroll_done <= 0;  // Single cycle pulse
+
+         // Handle new scroll requests
+         if (scroll && !scrolling && !scroll_pending) begin
+            scroll_pending <= 1;    // Queue the scroll operation
+            scroll_busy <= 1;       // Indicate we're waiting to scroll
+         end
+
+         // Start scroll operation on vblank rising edge if there's a pending scroll
+         if (vblank && scroll_pending && !scrolling) begin
+            scrolling <= 1;
+            scroll_addr <= 0;
+            scroll_pending <= 0;    // Clear pending flag
+         end
+         
+         // Perform scroll operation
+         if (scrolling) begin
+            if (scroll_addr < (ROWS-1)*COLS) begin
+                mem[scroll_addr] <= mem[scroll_addr + COLS];
+                scroll_addr <= scroll_addr + 1;
+            end
+            else begin
+                mem[scroll_addr] <= 8'h20;  // Clear current position
+                if (scroll_addr < (ROWS*COLS - 1)) begin
+                    scroll_addr <= scroll_addr + 1;
+                end
+                else begin
+                    scrolling <= 0;
+                    scroll_busy <= 0;
+                    scroll_done <= 1;
+                end
+            end
+         end
+         else begin
+            // Normal read/write operations
+            if (wen && (waddr < ROWS*COLS)) begin
+                mem[waddr] <= din;
+            end
+            dout <= (raddr < ROWS*COLS) ? mem[raddr] : 8'h20;
+         end
+      end
    end
 endmodule

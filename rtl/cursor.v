@@ -1,79 +1,31 @@
-/**
- * Cursor (position and blinking)
-
-The `cursor` module is a Verilog design that manages a cursor's position and blinking 
-state. It uses a few submodules to handle cursor blinking and position updates. 
-Here's a detailed breakdown of its components and functionality:
-
-### Parameters:
-- **`ROW_BITS`**: Number of bits used to represent the row coordinate of the cursor.
-- **`COL_BITS`**: Number of bits used to represent the column coordinate of the cursor.
-
-### Inputs and Outputs:
-- **Inputs**:
-  - **`clk`**: The clock signal driving the module.
-  - **`reset`**: A reset signal to initialize the module.
-  - **`tick`**: A periodic signal used to drive the cursor blinking.
-  - **`new_x`**: New column coordinate value for the cursor.
-  - **`new_y`**: New row coordinate value for the cursor.
-  - **`wen`**: Write enable signal used to update the cursor position.
-
-- **Outputs**:
-  - **`x`**: Current column coordinate of the cursor.
-  - **`y`**: Current row coordinate of the cursor.
-  - **`blink_on`**: Signal indicating whether the cursor should be blinking.
-
-### Submodules:
-1. **`cursor_blinker`**:
-   - This submodule handles the blinking behavior of the cursor. It uses the `cursor_blinker` module described earlier.
-   - **Inputs**:
-     - **`clk`**: Clock signal.
-     - **`reset`**: Reset signal.
-     - **`tick`**: Tick signal for controlling the blink rate.
-     - **`reset_count`**: When high, resets the blinking counter.
-   - **Output**:
-     - **`blink_on`**: Blinking state signal.
-
-2. **`simple_register` for `x`**:
-   - This submodule stores the cursor's column position.
-   - **Parameters**:
-     - **`SIZE`**: The bit-width for the register, set to `COL_BITS`.
-   - **Inputs**:
-     - **`clk`**: Clock signal.
-     - **`reset`**: Reset signal.
-     - **`idata`**: Data input, which is the new column value (`new_x`).
-     - **`wen`**: Write enable signal to update the register.
-   - **Output**:
-     - **`odata`**: Output data, which is the current column value (`x`).
-
-3. **`simple_register` for `y`**:
-   - This submodule stores the cursor's row position.
-   - **Parameters**:
-     - **`SIZE`**: The bit-width for the register, set to `ROW_BITS`.
-   - **Inputs**:
-     - **`clk`**: Clock signal.
-     - **`reset`**: Reset signal.
-     - **`idata`**: Data input, which is the new row value (`new_y`).
-     - **`wen`**: Write enable signal to update the register.
-   - **Output**:
-     - **`odata`**: Output data, which is the current row value (`y`).
-
-### Functionality:
-- **Blinking**: The `cursor_blinker` submodule controls whether the cursor should be visible 
-or blinking based on the tick signal and the internal counter.
-- **Position Update**: The `simple_register` instances for `x` and `y` manage the cursor's 
-position. The cursor's column and row coordinates can be updated with the `new_x` and `new_y` 
-inputs when `wen` (write enable) is active.
-- **Output**: The current cursor position is available on `x` and `y`, and the blinking state 
-is indicated by `blink_on`.
-
-### Summary:
-The `cursor` module integrates cursor position management and blinking behavior into a 
-single entity. It uses registers to hold the cursor's position and a blinking controller 
-to toggle the cursor's visibility. The module allows the cursor to be updated and blink 
-at a rate controlled by external signals.
-
+/* ================================================================
+ * VT52
+ *
+ * Copyright (C) 2024 Fred Van Eijk
+ *
+ * Permission is hereby granted, free of charge, to any person 
+ * obtaining a copy of this software and associated documentation 
+ * files (the "Software"), to deal in the Software without 
+ * restriction, including without limitation the rights to use, 
+ * copy, modify, merge, publish, distribute, sublicense, and/or 
+ * sell copies of the Software, and to permit persons to whom 
+ * the Software is furnished to do so, subject to the following 
+ * conditions:
+ * 
+ * The above copyright notice and this permission notice shall be 
+ * included in all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES 
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND 
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT 
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR 
+ * OTHER DEALINGS IN THE SOFTWARE.
+ * ================================================================
  */
+
 module cursor
   #(parameter ROW_BITS = 5,
     parameter COL_BITS = 7)
