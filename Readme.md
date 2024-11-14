@@ -172,13 +172,13 @@ A sample game application is included (`vt52-guess-the-animal-game.py`) that dem
 Serial mode (default):
 
 ```bash
-python guess_animal.py --mode serial --port COM9 --baudrate 115200
+python vt52-guess-the-animal-game.py --mode serial --port COM9 --baudrate 115200
 ```
 
 Telnet mode:
 
 ```bash
-python guess_animal.py --mode telnet --port 2323
+python vt52-guess-the-animal-game.py --mode telnet --port 2323
 ```
 
 ### Command Line Options
