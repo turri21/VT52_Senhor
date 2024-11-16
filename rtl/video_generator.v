@@ -58,19 +58,19 @@ module video_generator
    input  wire [7:0]  char_rom_data
    );
 
-  // Standard VGA 640x480@60Hz timing
+// 31KHz/60Hz timing for 25MHz clock
   localparam hbits = 10;          // Need 10 bits to count up to 800
-  localparam hpixels = 800;       // Total horizontal pixels
+  localparam hpixels = 800;       // Total horizontal pixels (25MHz/31KHz ≈ 800)
   localparam hbp = 48;            // Horizontal back porch
   localparam hvisible = 640;      // Visible horizontal pixels
-  localparam hfp = 16;            // Horizontal front porch
+  localparam hfp = 16;            // Horizontal front porch 
   localparam hpulse = 96;         // Horizontal sync pulse width
   
   localparam vbits = 10;          // Need 10 bits to count up to 525
-  localparam vlines = 525;        // Total vertical lines
-  localparam vbp = 33;            // Vertical back porch
-  localparam vvisible = 480;      // Visible vertical lines
-  localparam vfp = 10;            // Vertical front porch
+  localparam vlines = 525;        // Total vertical lines (31KHz/60Hz ≈ 525)
+  localparam vbp = 29;            // Vertical back porch
+  localparam vvisible = 384;      // Visible vertical lines (24 rows * 16 pixels)
+  localparam vfp = 110;           // Vertical front porch
   localparam vpulse = 2;          // Vertical sync pulse width
 
   // Vertical offset to center display (each row is 16 pixels high)

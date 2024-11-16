@@ -177,7 +177,7 @@ module emu
 ///////// Default values for ports not used in this core /////////
 
 assign ADC_BUS  = 'Z;
-assign {UART_RTS, UART_TXD, UART_DTR} = 0;
+assign {UART_RTS, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = '0;  
@@ -204,12 +204,16 @@ wire [1:0] ar = status[122:121];
 assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
 assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 
+// enable input on USER_IO[0] for UART i.e. USER_IN[0] rx
+assign USER_OUT[0] = 1'b1;
+
 `include "build_id.v" 
 localparam CONF_STR = {
    "VT52;;",
    "-;",
    "O[122:121],Aspect ratio,Original,Full Screen;",
    "O[4:3],Text Color,White,Red,Green,Blue;",
+   "OC,Serial Port,User IO Port,Console Port;",  // 12 Add UART port selection
    "-;",
    "T[0],Reset;",
    "R[0],Reset and close OSD;",
@@ -302,11 +306,13 @@ assign VGA_R = R;
 assign VGA_G = G;
 assign VGA_B = B;
 
-// USB UART pin assignments
-assign USER_OUT = 7'bZZZZZZZ;
+// UART port selection logic
 wire uart_tx_wire;
-assign USER_OUT[1] = uart_tx_wire;
-wire uart_rx_wire = USER_IN[0];
+wire uart_rx_wire = !status[12] ? USER_IN[0] : UART_RXD;
+assign UART_TXD = !status[12] ? 1'b1 : uart_tx_wire;
+assign USER_OUT[1] = !status[12] ? 
+                 uart_tx_wire : // When USER_IO selected
+                 1'b1;                 // When UART selected
 
 VT52_terminal vt52_inst
 (
