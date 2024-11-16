@@ -18,9 +18,9 @@ This core implements a VT52-compatible terminal emulator for the MiSTer FPGA pla
 
 ## Setup
 
-### UART Connection
+### UART Connection - User I/O port
 
-The UART interface is available through the User port on the MiSTer:
+The UART interface is available through the User I/O port on the MiSTer:
 
 - User port pin 1 (D-/TX): Connect to RX of your USB-to-Serial adapter
 - User port pin 0 (D+/RX): Connect to TX of your USB-to-Serial adapter
@@ -34,6 +34,37 @@ Most USB-to-Serial adapters should work. Tested adapters include:
 
 Note: Make sure your adapter supports 115200 baud and is configured for 8N1 operation.
 
+USB/Serial cable: For more information see the Serial Port section of the Altair8800_MiSTer repository:  <https://github.com/MiSTer-devel/Altair8800_MiSTer>
+
+### For UART/Serial with PuTTY
+
+- Connect at 115200 baud, 8 bits, no parity to the COM port.  Note this uses is the console port on the DE10-Nano
+
+### For SSH with PuTTY
+
+- Connect to the ip address of your MiSTer fpga.
+
+#### Linux command line to establish the connection to the core
+
+1. Identify the UART device:
+   - Usually mapped to `/dev/ttyS1` or `/dev/ttyUSB0`
+   - Use this command to help identify the correct device:
+
+     ``` bash
+     dmesg | grep tty
+     ```
+
+2. Access the serial terminal:
+   - Use `screen` or `minicom`
+   - Example command with `screen`:
+
+     ``` bash
+     screen /dev/ttyS1 115200
+     ```
+
+   - Replace `/dev/ttyS1` with the correct device identifier
+   - Change 115200 to the appropriate baud rate if different
+
 ### OSD Menu Options
 
 Access the On-Screen Display (OSD) menu using the Menu button on your MiSTer setup.
@@ -41,16 +72,18 @@ Access the On-Screen Display (OSD) menu using the Menu button on your MiSTer set
 Available options:
 
 1. Aspect Ratio
-   - Original (4:3)
+   - Original (4:3) (default)
    - Full Screen
-   - [Custom ratio 1]
-   - [Custom ratio 2]
 
 2. Text Color
    - White (default)
    - Red
    - Green
    - Blue
+
+3. UART Selection
+   - User IO port (default)
+   - Console Port
 
 ### Reset Options
 
@@ -157,7 +190,7 @@ A sample game application is included (`vt52-guess-the-animal-game.py`) that dem
 
 ### Game Display Layout
 
-```
+``` svg
      +---+
      |   |    Title and game status at top
      O   |    
@@ -183,7 +216,7 @@ python vt52-guess-the-animal-game.py --mode telnet --port 2323
 
 ### Command Line Options
 
-```
+``` bash
 --mode     : Connection mode (serial or telnet)
 --port     : Serial port or telnet port number
 --baudrate : Serial baudrate (default: 115200)
@@ -223,7 +256,7 @@ The game serves as both a practical example of terminal usage and a test tool fo
 
 ### Command Line Options
 
-```
+``` bash
 --mode     : Connection mode (serial or telnet)
 --port     : Serial port or telnet port number
 --baudrate : Serial baudrate (default: 115200)
@@ -307,6 +340,7 @@ The terminal provides visual feedback through the LED for:
   - Modifier key handling (Shift, Control, Meta)
   - Error detection and reporting
   - Special key sequence processing
+  - Repeating key support on appropriate keys
 
 - **Keymap ROM**: Key translation tables
   - 2KB ROM for keycode mapping
@@ -334,7 +368,7 @@ The terminal provides visual feedback through the LED for:
 
 ### Data Flow
 
-```
+``` svg
 Input Stage:
 PS/2 Keyboard → Keyboard Controller →\
                                      Input Multiplexer → Command Handler

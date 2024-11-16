@@ -26,9 +26,8 @@
  * ================================================================
  */
 
-module keyboard
-(
-   input         clk,          // 50MHz system clock
+module keyboard(
+   input         clk,          // 25MHz system clock
    input         reset,
    input         ps2_data,
    input         ps2_clk,
@@ -73,6 +72,15 @@ module keyboard
    localparam KEYCODE_MODIFIER = 2'b10;
    localparam KEYCODE_ESCAPED  = 2'b11;
 
+   // Timing parameters in milliseconds and Hz
+   localparam CLOCK_FREQ_MHZ   = 25;                    // Clock frequency in MHz
+   localparam INITIAL_DELAY_MS = 500;                   // 500ms initial delay before repeat
+   localparam REPEAT_RATE_HZ   = 10;                    // 10 characters per second
+
+   // Convert to clock cycles for 25MHz clock
+   localparam REPEAT_DELAY     = CLOCK_FREQ_MHZ * 1000 * INITIAL_DELAY_MS;  // 500ms = 12,500,000 cycles
+   localparam REPEAT_RATE      = (CLOCK_FREQ_MHZ * 1000_000) / REPEAT_RATE_HZ; // 10Hz = 2,500,000 cycles
+
    // PS/2 input synchronization & edge detection
    reg [2:0]  ps2_clk_sync;
    reg [2:0]  ps2_data_sync;
@@ -93,6 +101,12 @@ module keyboard
    reg [7:0]  special_data;
    reg [15:0] valid_extend_reg;
 
+   // Key repeat registers
+   reg [23:0] repeat_counter;
+   reg        repeat_active;
+   reg [7:0]  repeat_keycode;
+   reg        in_repeat_delay;
+
    // Debug tracking registers
    reg        in_regular_path;
    reg [7:0]  last_data_reg;
@@ -101,6 +115,11 @@ module keyboard
    wire       shift_pressed   = modifier_pressed[5] || modifier_pressed[0];
    wire       control_pressed = modifier_pressed[4] || modifier_pressed[1];
    wire       meta_pressed    = modifier_pressed[3] || modifier_pressed[2];
+
+   // Non-repeatable keys
+   wire is_non_repeatable = (ps2_byte == 8'hF0) ||     // Break code
+                           (ps2_byte == 8'hE0) ||     // Extended prefix
+                           (keymap_data[7:6] == KEYCODE_MODIFIER); // Modifier keys
 
    // Function to calculate parity
    function calc_parity;
@@ -194,7 +213,7 @@ module keyboard
       .dout(keymap_data)
    );
 
-   // Connect debug outputs
+   // Debug output assignments
    assign debug_in_regular_path = in_regular_path;
    assign debug_data_reg = last_data_reg;
 
@@ -214,11 +233,32 @@ module keyboard
          special_data <= 8'h0;
          valid_extend_reg <= 16'h0;
          debug_next_state <= STATE_IDLE;
+         repeat_counter <= 0;
+         repeat_active <= 0;
+         repeat_keycode <= 0;
+         in_repeat_delay <= 0;
       end
       else begin
          // Clear valid when data has been accepted
          if (valid && ready)
             valid <= 1'b0;
+
+         // Handle key repeat timing
+         if (repeat_active) begin
+            repeat_counter <= repeat_counter + 1;
+            
+            if (in_repeat_delay && repeat_counter >= REPEAT_DELAY) begin
+               repeat_counter <= 0;
+               in_repeat_delay <= 0;
+            end
+            else if (!in_repeat_delay && repeat_counter >= REPEAT_RATE) begin
+               repeat_counter <= 0;
+               if (!valid) begin
+                  valid <= 1;
+                  data_reg <= keymap_data;
+               end
+            end
+         end
 
          case (state)
             STATE_IDLE: begin
@@ -261,6 +301,9 @@ module keyboard
             STATE_KEY_UP: begin
                ps2_break_keycode <= 1'b0;
                ps2_long_keycode <= 1'b0;
+               repeat_active <= 0;
+               repeat_counter <= 0;
+               in_repeat_delay <= 0;
                debug_next_state <= STATE_IDLE;
                state <= STATE_IDLE;
                
@@ -309,6 +352,16 @@ module keyboard
                         end
                         debug_next_state <= STATE_IDLE;
                         state <= STATE_IDLE;
+                        
+                        // Start repeat for regular keys
+                        if (!is_non_repeatable) begin
+                           repeat_keycode <= ps2_byte;
+                           if (!repeat_active) begin
+                              repeat_active <= 1;
+                              repeat_counter <= 0;
+                              in_repeat_delay <= 1;
+                           end
+                        end
                      end
                   end
                end

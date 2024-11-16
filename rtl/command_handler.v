@@ -58,6 +58,7 @@ module command_handler
   reg [ADDR_BITS-1:0] last_char_to_erase;
   reg [31:0] timeout_counter;
   reg state_timeout;
+  reg update_cursor;  // New: Flag to update cursor position
 
   // State encoding - one-hot
   localparam state_char        = 8'b00000001;
@@ -72,7 +73,6 @@ module command_handler
   reg [7:0] state;
 
   // At 25MHz clock:
-  // 1 second = 25,000,000 cycles
   localparam UART_TIMEOUT    = 32'd25_000_000;    // 1 second
   localparam KEYBOARD_TIMEOUT = 32'd125_000_000;  // 5 seconds
 
@@ -152,11 +152,13 @@ module command_handler
       new_col <= 0;
       erase_address <= 0;
       last_char_to_erase <= 0;
+      update_cursor <= 0;
     end
     else begin
       // Clear one-cycle signals
       buffer_write_enable <= 0;
-      new_cursor_wen <= 0;
+      new_cursor_wen <= update_cursor;  // Set based on update flag
+      update_cursor <= 0;               // Clear the update flag
       buffer_scroll <= 0;
 
       case (state)
@@ -185,14 +187,13 @@ module command_handler
         state_char: begin
           if (ready && valid && !scroll_busy) begin
             if (data >= 8'h20 && data != 8'h7f) begin
-              // Write the character
+              // Write the character first
               buffer_write_char <= data;
               buffer_write_addr <= current_char_addr;
               buffer_write_enable <= 1;
 
-              // Standard VT52 cursor advance
+              // Then handle cursor movement
               if (new_cursor_x == (COLS-1)) begin
-                // At end of line
                 if (new_cursor_y == (ROWS-1)) begin
                   buffer_scroll <= 1;
                   state <= state_scroll_wait;
@@ -200,7 +201,7 @@ module command_handler
                 else begin
                   new_cursor_y <= new_cursor_y + 1;
                   new_cursor_x <= 0;
-                  new_cursor_wen <= 1;
+                  update_cursor <= 1;  // Set flag to update cursor
                   current_row_addr <= current_row_addr + COLS;
                   current_char_addr <= current_row_addr + COLS;
                 end
@@ -208,7 +209,7 @@ module command_handler
               else begin
                 new_cursor_x <= new_cursor_x + 1;
                 current_char_addr <= current_char_addr + 1;
-                new_cursor_wen <= 1;
+                update_cursor <= 1;  // Set flag to update cursor
               end
             end
             else begin
@@ -217,7 +218,7 @@ module command_handler
                   if (new_cursor_x != 0) begin
                     new_cursor_x <= new_cursor_x - 1;
                     current_char_addr <= current_char_addr - 1;
-                    new_cursor_wen <= 1;
+                    update_cursor <= 1;
                   end
                 end
 
@@ -225,12 +226,12 @@ module command_handler
                   if (new_cursor_x < (COLS-9)) begin
                     new_cursor_x <= {(new_cursor_x[COL_BITS-1:3]+1), 3'b000};
                     current_char_addr <= {(current_char_addr[ADDR_BITS-1:3]+1), 3'b000};
-                    new_cursor_wen <= 1;
+                    update_cursor <= 1;
                   end
                   else if (new_cursor_x != (COLS-1)) begin
                     new_cursor_x <= new_cursor_x + 1;
                     current_char_addr <= current_char_addr + 1;
-                    new_cursor_wen <= 1;
+                    update_cursor <= 1;
                   end
                 end
 
@@ -241,7 +242,7 @@ module command_handler
                   end
                   else begin
                     new_cursor_y <= new_cursor_y + 1;
-                    new_cursor_wen <= 1;
+                    update_cursor <= 1;
                     current_row_addr <= current_row_addr + COLS;
                     current_char_addr <= current_char_addr + COLS;
                   end
@@ -249,7 +250,7 @@ module command_handler
 
                 8'h0d: begin  // CR - Return to start of line
                   new_cursor_x <= 0;
-                  new_cursor_wen <= 1;
+                  update_cursor <= 1;
                   current_char_addr <= current_row_addr;
                 end
 
@@ -267,7 +268,7 @@ module command_handler
               "A": begin  // Cursor up
                 if (new_cursor_y != 0) begin
                   new_cursor_y <= new_cursor_y - 1;
-                  new_cursor_wen <= 1;
+                  update_cursor <= 1;
                   current_row_addr <= current_row_addr - COLS;
                   current_char_addr <= current_char_addr - COLS;
                 end
@@ -277,7 +278,7 @@ module command_handler
               "B": begin  // Cursor down
                 if (new_cursor_y != (ROWS-1)) begin
                   new_cursor_y <= new_cursor_y + 1;
-                  new_cursor_wen <= 1;
+                  update_cursor <= 1;
                   current_row_addr <= current_row_addr + COLS;
                   current_char_addr <= current_char_addr + COLS;
                 end
@@ -287,7 +288,7 @@ module command_handler
               "C": begin  // Cursor right
                 if (new_cursor_x != (COLS-1)) begin
                   new_cursor_x <= new_cursor_x + 1;
-                  new_cursor_wen <= 1;
+                  update_cursor <= 1;
                   current_char_addr <= current_char_addr + 1;
                 end
                 state <= state_char;
@@ -296,7 +297,7 @@ module command_handler
               "D": begin  // Cursor left
                 if (new_cursor_x != 0) begin
                   new_cursor_x <= new_cursor_x - 1;
-                  new_cursor_wen <= 1;
+                  update_cursor <= 1;
                   current_char_addr <= current_char_addr - 1;
                 end
                 state <= state_char;
@@ -305,7 +306,7 @@ module command_handler
               "H": begin  // Cursor home
                 new_cursor_x <= 0;
                 new_cursor_y <= 0;
-                new_cursor_wen <= 1;
+                update_cursor <= 1;
                 current_row_addr <= 0;
                 current_char_addr <= 0;
                 state <= state_char;
@@ -318,7 +319,7 @@ module command_handler
                 end
                 else begin
                   new_cursor_y <= new_cursor_y - 1;
-                  new_cursor_wen <= 1;
+                  update_cursor <= 1;
                   current_row_addr <= current_row_addr - COLS;
                   current_char_addr <= current_char_addr - COLS;
                   state <= state_char;
@@ -333,7 +334,7 @@ module command_handler
                 // Also move cursor home per VT52 spec
                 new_cursor_x <= 0;
                 new_cursor_y <= 0;
-                new_cursor_wen <= 1;
+                update_cursor <= 1;
                 current_row_addr <= 0;
                 current_char_addr <= 0;
                 state <= state_erase;
@@ -381,7 +382,7 @@ module command_handler
         state_cursor: begin
           new_cursor_x <= new_col;
           new_cursor_y <= new_row;
-          new_cursor_wen <= 1;
+          update_cursor <= 1;
           current_row_addr <= new_row * COLS;
           current_char_addr <= (new_row * COLS) + new_col;
           state <= state_char;
