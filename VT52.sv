@@ -211,9 +211,10 @@ assign USER_OUT[0] = 1'b1;
 localparam CONF_STR = {
    "VT52;;",
    "-;",
-   "O[122:121],Aspect ratio,Original,Full Screen;",
+   "O[122:121],Aspect ratio,Original (4:3),Full Screen;",
    "O[4:3],Text Color,White,Red,Green,Blue;",
-   "OC,Serial Port,User IO Port,Console Port;",  // 12 Add UART port selection
+   "OC,Serial Port,User IO Port,Console Port;",
+   "OE,Font,Terminus 8x16, VT52 rom 8x8;", 
    "-;",
    "T[0],Reset;",
    "R[0],Reset and close OSD;",
@@ -256,10 +257,10 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(800)) hps_io
 
 wire reset = RESET | status[0] | buttons[1];
 
-// Generate CE_PIXEL
+// Generate CE_PIXEL for ~14.7MHz from 29.4MHz
 reg ce_pix;
 always @(posedge CLK_VIDEO) begin
-   reg [1:0] div;
+   reg div;  // Single bit for divide by 2
    div <= div + 1'd1;
    ce_pix <= !div;
 end
@@ -312,13 +313,14 @@ wire uart_rx_wire = !status[12] ? USER_IN[0] : UART_RXD;
 assign UART_TXD = !status[12] ? 1'b1 : uart_tx_wire;
 assign USER_OUT[1] = !status[12] ? 
                  uart_tx_wire : // When USER_IO selected
-                 1'b1;                 // When UART selected
+                 1'b1;         // When UART selected
 
 VT52_terminal vt52_inst
 (
     .clk(CLK_VIDEO),
     .reset(reset),
     .ce_pix(ce_pix),
+    .font_8x8(status[14]),
     .hsync(HSync),
     .vsync(VSync),
     .hblank(HBlank),

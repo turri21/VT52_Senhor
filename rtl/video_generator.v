@@ -33,9 +33,10 @@ module video_generator
    parameter COL_BITS = 7,
    parameter ADDR_BITS = 11)
   (
-   input  wire        clk,         // 50MHz system clock
+   input  wire        clk,
    input  wire        reset,
    input  wire        ce_pixel,    // Pixel clock enable
+   input  wire        font_8x8,    // Runtime font selection
    
    // video output
    output reg         hsync,
@@ -58,31 +59,38 @@ module video_generator
    input  wire [7:0]  char_rom_data
    );
 
-// 31KHz/60Hz timing for 25MHz clock
-  localparam hbits = 10;          // Need 10 bits to count up to 800
-  localparam hpixels = 800;       // Total horizontal pixels (25MHz/31KHz ≈ 800)
-  localparam hbp = 48;            // Horizontal back porch
-  localparam hvisible = 640;      // Visible horizontal pixels
-  localparam hfp = 16;            // Horizontal front porch 
-  localparam hpulse = 96;         // Horizontal sync pulse width
-  
-  localparam vbits = 10;          // Need 10 bits to count up to 525
-  localparam vlines = 525;        // Total vertical lines (31KHz/60Hz ≈ 525)
-  localparam vbp = 29;            // Vertical back porch
-  localparam vvisible = 384;      // Visible vertical lines (24 rows * 16 pixels)
-  localparam vfp = 110;           // Vertical front porch
-  localparam vpulse = 2;          // Vertical sync pulse width
+  localparam hbits = 10;         // Need 10 bits to count up to 936
+  localparam vbits = 9;          // Need 9 bits to count up to 420
 
-  // Vertical offset to center display (each row is 16 pixels high)
-  localparam voffset = ((vvisible - (ROWS * 16)) >> 1);
-  
-  // sync polarity for standard VGA
+ // VT52 timing with dynamic character height
+ localparam hpixels = 936;       // Total horizontal pixels
+ localparam hvisible = 640;      // 80 chars * 8 dots
+ localparam hbp = 96;            // Back porch
+ localparam hfp = 104;           // Front porch
+ localparam hpulse = 96;         // Sync pulse
+
+   reg [vbits-1:0] vlines;          // Total scan lines
+   reg [vbits-1:0] vvisible;        // Visible scan lines 
+   reg [vbits-1:0] voffset;         // Vertical offset
+   reg [vbits-1:0] vfp_reg;         // Dynamic front porch
+   reg [vbits-1:0] vbp_reg;         // Dynamic back porch
+ 
+ localparam vpulse = 2;          // Vertical sync pulse
+ 
+ // Calculate vertical timing values based on font_8x8
+ always @* begin
+   vvisible = ROWS * (font_8x8 ? 8 : 16);
+   vlines = font_8x8 ? 262 : 420;
+   vbp_reg = font_8x8 ? 16 : 16;
+   vfp_reg = font_8x8 ? 52 : 18;  // Adjusted for exact 60Hz in 8x8 mode
+   voffset = ((vvisible - (ROWS * (font_8x8 ? 8 : 16))) >> 1);
+ end
+
   localparam hsync_on = 1'b0;     // Horizontal sync is active low
   localparam vsync_on = 1'b0;     // Vertical sync is active low
   localparam hsync_off = ~hsync_on;
   localparam vsync_off = ~vsync_on;
   
-  // video polarity
   localparam video_on = 1'b1;
   localparam video_off = ~video_on;
 
@@ -103,21 +111,20 @@ module video_generator
   reg [ROW_BITS-1:0] row, next_row;
   reg [COL_BITS-1:0] col, next_col;
   
-  // Pixel position within character (8x16 characters)
+  // Pixel position within character
   reg [2:0] colc, next_colc;      // 0-7 for 8 pixels wide
-  reg [3:0] rowc, next_rowc;      // 0-15 for 16 pixels high
+  reg [4:0] rowc, next_rowc;      // Made wide enough for 0-15
 
   // Memory interface assignments
   assign char_buffer_address = row * COLS + col;
-   // The address of the char row in rom is formed with the char and the row offset
-   // we can get away with the addition here because the number of rows
-   // in this font is a power of 2 (16 in this case)
-  assign char_rom_address = {char_buffer_data, rowc};
+  assign char_rom_address = font_8x8 ? 
+                           {1'b0, char_buffer_data[6:0], rowc[2:0]} :   // 7-bit char + 3-bit row for 8x8
+                           {char_buffer_data, rowc[3:0]};               // 8-bit char + 4-bit row for 8x16
 
   // Calculate if current position is in visible text area
   wire in_visible_area = !next_hblank && !next_vblank &&
-                        (next_vc >= (vbp + voffset)) &&
-                        (next_vc < (vbp + voffset + (ROWS * 16)));
+                        (next_vc >= (vbp_reg + voffset)) &&
+                        (next_vc < (vbp_reg + voffset + vvisible));
 
   // Horizontal and vertical counters with sync and blank generation
   always @(posedge clk) begin
@@ -152,11 +159,11 @@ module video_generator
      
      // Generate sync pulses
      next_hsync = (next_hc >= (hbp + hvisible + hfp)) ? hsync_on : hsync_off;
-     next_vsync = (next_vc >= (vbp + vvisible + vfp)) ? vsync_on : vsync_off;
+     next_vsync = (next_vc >= (vbp_reg + vvisible + vfp_reg)) ? vsync_on : vsync_off;
      
      // Generate blank signals
      next_hblank = (next_hc < hbp) || (next_hc >= (hbp + hvisible));
-     next_vblank = (next_vc < vbp) || (next_vc >= (vbp + vvisible));
+     next_vblank = (next_vc < vbp_reg) || (next_vc >= (vbp_reg + vvisible));
   end
 
   // Character and row/column position tracking
@@ -177,7 +184,7 @@ module video_generator
 
   // Next state calculation for character position
   always @(*) begin
-     if (next_vc < (vbp + voffset)) begin
+     if (next_vc < (vbp_reg + voffset)) begin
         // Before visible area
         next_row = 0;
         next_rowc = 0;
@@ -192,13 +199,12 @@ module video_generator
         next_colc = 0;
 
         if (hblank == 0) begin  // Positive edge of hblank
-           if (rowc == 15) begin
+           if ((font_8x8 && rowc == 7) || (!font_8x8 && rowc == 15)) begin
               next_row = row + 1;
               next_rowc = 0;
            end
            else begin
               next_rowc = rowc + 1;
-                // Keep same character address for next scanline
            end
         end
      end
@@ -215,9 +221,7 @@ module video_generator
      end
   end
 
-   //
-   // pixel out (char & cursor combination)
-   //
+  // pixel out (char & cursor combination)
   always @(posedge clk) begin
      if (reset) 
         video <= video_off;
@@ -236,10 +240,6 @@ module video_generator
       
      // Combine character and cursor
      combined_pixel = char_pixel ^ cursor_pixel;
-      // // combine, but only emit video on non-blanking periods
-      // combined_pixel = (next_hblank || next_vblank)?
-      //                  video_off :
-      //                  char_pixel ^ cursor_pixel;
   end
 
 endmodule

@@ -28,9 +28,10 @@
 
 module VT52_terminal 
 (
- input             clk,         // Single clock (CLK_VIDEO - 25MHz)
+ input             clk,
  input             reset,
  input             ce_pix,
+ input             font_8x8,
  
  output wire       hsync,
  output wire       vsync,
@@ -56,13 +57,13 @@ module VT52_terminal
  localparam [1:0] TX_CHAR_LENGTH = 2'b11;    // 8 bits
  localparam [1:0] TX_STOP_BITS = 2'b00;      // 1 stop bit
  localparam [1:0] TX_PARITY_MODE = 2'b00;    // No parity
- localparam [15:0] TX_BAUD_DIV = 16'd216;    // 25MHz/115200 baud
+ localparam [15:0] TX_BAUD_DIV = 16'd255;    // 29.4MHz/115200 baud
 
  // vt52_8251_uart configuration parameters - RX Side
  localparam [1:0] RX_CHAR_LENGTH = 2'b11;    // 8 bits
  localparam [1:0] RX_STOP_BITS = 2'b00;      // 1 stop bit
  localparam [1:0] RX_PARITY_MODE = 2'b00;    // No parity
- localparam [15:0] RX_BAUD_DIV = 16'd216;    // 25MHz/115200 baud
+ localparam [15:0] RX_BAUD_DIV = 16'd255;    // 29.4MHz/115200 baud
  
  // Debug signals from keyboard
  wire [15:0] kbd_valid_extend;
@@ -87,7 +88,7 @@ module VT52_terminal
  wire [7:0] mux_out_data;
  wire mux_out_valid;
  wire mux_out_ready;
- wire mux_out_from_uart;  // New: track data source
+ wire mux_out_from_uart;
 
  // Command handler outputs
  wire buffer_scroll;
@@ -219,7 +220,7 @@ module VT52_terminal
     .uart_ready(uart_rx_ready),
     .out_data(mux_out_data),
     .out_valid(mux_out_valid),
-    .out_from_uart(mux_out_from_uart),  // New: connect from_uart signal
+    .out_from_uart(mux_out_from_uart),
     .out_ready(mux_out_ready)
  );
 
@@ -235,7 +236,7 @@ module VT52_terminal
     .reset(reset),
     .data(mux_out_data),
     .valid(mux_out_valid),
-    .from_uart(mux_out_from_uart),  // New: pass from_uart to command handler
+    .from_uart(mux_out_from_uart),
     .ready(mux_out_ready),
     .buffer_scroll(buffer_scroll),
     .scroll_busy(scroll_busy),
@@ -274,21 +275,23 @@ module VT52_terminal
     .clk(clk),
     .reset(reset),
     .scroll(buffer_scroll),
-    .vblank(vblank),        //  Connect vblank signal
+    .vblank(vblank),
     .scroll_busy(scroll_busy),
     .scroll_done(scroll_done),
     .din(buffer_write_char),
     .waddr(buffer_write_addr),
     .wen(buffer_write_enable),
     .raddr(buffer_read_addr),
-    .dout(buffer_read_char)
+    .dout(buffer_read_char),
+    .font_8x8(font_8x8)
  );
 
  // Character ROM
  char_rom char_rom(
     .clk(clk),
     .addr(char_rom_address),
-    .dout(char_rom_data)
+    .dout(char_rom_data),
+    .font_8x8(font_8x8)
  );
 
  // Video generator
@@ -302,6 +305,7 @@ module VT52_terminal
     .clk(clk),
     .reset(reset),
     .ce_pixel(ce_pix),
+    .font_8x8(font_8x8),
     .hsync(hsync),
     .vsync(vsync),
     .video(video),
