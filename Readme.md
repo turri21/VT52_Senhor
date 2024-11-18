@@ -85,6 +85,10 @@ Available options:
    - User IO port (default)
    - Console Port
 
+4. Font Selection
+   - Terminus 8x16 (default)
+   - VT52 rom 8x8
+
 ### Reset Options
 
 - Soft Reset: Available through OSD menu
@@ -120,6 +124,7 @@ All escape sequences start with the ESC character (0x1B):
 - Character Set: Standard ASCII (32-126)
 - Cursor: Blinking block cursor
 - Hardware scrolling using 25-row buffer (24 visible + 1 scroll buffer)
+- Duplicate original video timing with VT52 font
 
 ## Test Server
 
@@ -293,7 +298,7 @@ The terminal provides visual feedback through the LED for:
 
 ## Technical Notes
 
-- Core Clock: 25MHz
+- Core Clock: 29.4MHz
 - Video output compatible with standard VGA/HDMI displays
 - Full hardware implementation with no CPU requirements
 - 25-row buffer implementation (24 visible + 1 scroll)
@@ -318,14 +323,15 @@ The terminal provides visual feedback through the LED for:
   - Hardware-accelerated scroll operations
 
 - **Character ROM**: Font storage and rendering
-  - 4K x 8 ROM using Terminus Font 8x16
-  - Latin-1 character subset
+  - 4K x 8 ROM using Terminus Latin-1 Font 8x16
+  - 1K x 8 ROM using Original VT52 Font 8x8
   - Synchronous font data access
 
 - **Video Generator**: Display timing and rendering
   - VGA/HDMI signal generation
   - Character and cursor rendering
   - Blanking signal control
+  - Close to original VT52 timing
 
 3. **Input Processing Modules**
 
@@ -395,7 +401,7 @@ This diagram shows:
 
 1. **Synchronous Design**
 
-- Single 25MHz clock domain
+- Single 29.4 MHz clock domain
 - Clean handshaking between modules
 - Proper reset propagation
 
@@ -420,7 +426,6 @@ This diagram shows:
 - Input overflow prevention
 - LED status indication
 
-[Remaining sections continue as before...]
 
 ## Debugging
 
