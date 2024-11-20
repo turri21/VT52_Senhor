@@ -30,7 +30,7 @@ module char_rom (
     input wire clk,
     input wire font_8x8,           // Runtime font selection
     input wire [11:0] addr,        // Keep same address width for compatibility
-    output reg [7:0] dout
+    output wire [7:0] dout         // Changed from reg to wire
 );
     // Two separate memory arrays
     reg [7:0] mem_8x8 [1023:0];    // 128 chars * 8 rows = 1K
@@ -49,7 +49,7 @@ module char_rom (
     wire [9:0] addr_8x8 = {char_num[6:0], row_8};     // 7 bits char + 3 bits row
     wire [11:0] addr_8x16 = {addr[11:4], row_16};     // Full 8-bit char + 4 bits row
     
-    always @(posedge clk) begin
-        dout <= font_8x8 ? mem_8x8[addr_8x8] : mem_8x16[addr_8x16];
-    end
+    // Changed from registered to combinational output
+    assign dout = font_8x8 ? mem_8x8[addr_8x8] : mem_8x16[addr_8x16];
+
 endmodule
