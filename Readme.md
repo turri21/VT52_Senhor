@@ -1,3 +1,8 @@
+-=(VT52_Senhor notes)=-
+
+Tested: Working Video 720p, 1080p & Sound.
+
+___
 # VT52 Terminal Core for MiSTer
 
 by Fred Van Eijk
