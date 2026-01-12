@@ -1,3 +1,8 @@
+-=(VT52_Senhor notes)=-
+
+Tested: Working Video 720p, 1080p.
+
+___
 # VT52 Terminal Core for MiSTer
 
 by Fred Van Eijk
@@ -446,3 +451,4 @@ Planned features:
 3. Configurable UART parameters
 4. Extended character set support
 5. Save/restore terminal state
+
